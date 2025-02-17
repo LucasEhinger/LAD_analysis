@@ -22,7 +22,9 @@ void ana_LAD_g4(string energy= "400") {
   TTree *hodoposition = (TTree *)file->Get("hodoposition");
   // Get the hodoenergy tree
   TTree *hodoenergy = (TTree *)file->Get("hodoenergy");
-  if (!hodoposition || !hodoenergy) {
+  // Get the gemana tree
+  TTree *gemana = (TTree *)file->Get("gemana");
+  if (!hodoposition || !hodoenergy || !gemana) {
     cerr << "Error getting trees" << endl;
     file->Close();
     return;
@@ -56,6 +58,31 @@ void ana_LAD_g4(string energy= "400") {
   hodoenergy->SetBranchAddress("vPDG", &vPDG);
   hodoenergy->SetBranchAddress("vLevel", &vLevel);
 
+// Set branch addresses for gemana
+  vector<double> *vXloc     = nullptr;
+  vector<double> *vYloc     = nullptr;
+  vector<double> *vZloc     = nullptr;
+  vector<double> *vXglo     = nullptr;
+  vector<double> *vYglo     = nullptr;
+  vector<double> *vZglo     = nullptr;
+  vector<double> *vTchamber = nullptr;
+  vector<int> *vChamber     = nullptr;
+  vector<int> *vgPDG        = nullptr;
+  vector<int> *vgLevel      = nullptr;
+
+  gemana->SetBranchAddress("vXloc", &vXloc);
+  gemana->SetBranchAddress("vYloc", &vYloc);
+  gemana->SetBranchAddress("vZloc", &vZloc);
+  gemana->SetBranchAddress("vXglo", &vXglo);
+  gemana->SetBranchAddress("vYglo", &vYglo);
+  gemana->SetBranchAddress("vZglo", &vZglo);
+  gemana->SetBranchAddress("vTchamber", &vTchamber);
+  gemana->SetBranchAddress("vChamber", &vChamber);
+  gemana->SetBranchAddress("vgPDG", &vgPDG);
+  gemana->SetBranchAddress("vgLevel", &vgLevel);
+
+  // Create a new ROOT file
+
   TFile *outfile = TFile::Open(outfile_name.c_str(), "RECREATE");
   if (!outfile || outfile->IsZombie()) {
     std::cerr << "Error creating output file" << std::endl;
@@ -78,6 +105,32 @@ void ana_LAD_g4(string energy= "400") {
   outTree->Branch("vPaddle", &out_vPaddle);
   outTree->Branch("vEDep", &out_vEDep);
   outTree->Branch("vEDep_all", &out_vEDep_all);
+
+  // Create branches for GEM hits
+  int LAD_GEM_hit_nhits;
+  vector<double> *LAD_GEM_hit_xin = new vector<double>();
+  vector<double> *LAD_GEM_hit_yin = new vector<double>();
+  vector<double> *LAD_GEM_hit_zin = new vector<double>();
+  vector<double> *LAD_GEM_hit_xout = new vector<double>();
+  vector<double> *LAD_GEM_hit_yout = new vector<double>();
+  vector<double> *LAD_GEM_hit_zout = new vector<double>();
+  vector<double> *LAD_GEM_hit_t = new vector<double>();
+  vector<double> *LAD_GEM_hit_t_out = new vector<double>();
+  vector<double> *LAD_GEM_hit_edep = new vector<double>();
+  vector<int> *LAD_GEM_hit_plane = new vector<int>();
+
+  outTree->Branch("LAD_GEM_hit_nhits", &LAD_GEM_hit_nhits);
+  outTree->Branch("LAD_GEM_hit_xin", &LAD_GEM_hit_xin);
+  outTree->Branch("LAD_GEM_hit_yin", &LAD_GEM_hit_yin);
+  outTree->Branch("LAD_GEM_hit_zin", &LAD_GEM_hit_zin);
+  outTree->Branch("LAD_GEM_hit_xout", &LAD_GEM_hit_xout);
+  outTree->Branch("LAD_GEM_hit_yout", &LAD_GEM_hit_yout);
+  outTree->Branch("LAD_GEM_hit_zout", &LAD_GEM_hit_zout);
+  outTree->Branch("LAD_GEM_hit_t", &LAD_GEM_hit_t);
+  outTree->Branch("LAD_GEM_hit_t_out", &LAD_GEM_hit_t_out);
+  outTree->Branch("LAD_GEM_hit_edep", &LAD_GEM_hit_edep);
+  outTree->Branch("LAD_GEM_hit_plane", &LAD_GEM_hit_plane);
+
 
   // Loop over entries and print the vectors
   Long64_t nEntries = hodoposition->GetEntries();
@@ -128,6 +181,28 @@ void ana_LAD_g4(string energy= "400") {
       }
       (*out_vEDep_all)[indx] += vEneDep->at(j);
     }
+
+    // Loop over the gem hits
+    for (int j = 0; j < vXloc->size(); ++j) {
+
+      if (vgLevel->at(j) != 1 || vgPDG->at(j) != 2212) { // 2212 is the PDG ID for protons
+        continue;
+      }
+      if(j != 0 && vChamber->at(j) == vChamber->at(j-1) && vgPDG->at(j) == vgPDG->at(j-1) && vgLevel->at(j) == vgLevel->at(j-1)) {
+        continue;
+      }
+      LAD_GEM_hit_xin->push_back(vXloc->at(j) / 1000);
+      LAD_GEM_hit_yin->push_back(vYloc->at(j) / 1000);
+      LAD_GEM_hit_zin->push_back(vZloc->at(j) / 1000);
+      LAD_GEM_hit_xout->push_back(vXloc->at(j) / 1000);
+      LAD_GEM_hit_yout->push_back(vYloc->at(j) / 1000);
+      LAD_GEM_hit_zout->push_back((vZloc->at(j) + 5.0) / 1000);
+      LAD_GEM_hit_t->push_back(vTchamber->at(j));
+      LAD_GEM_hit_t_out->push_back(vTchamber->at(j));
+      LAD_GEM_hit_edep->push_back(0);
+      LAD_GEM_hit_plane->push_back(vChamber->at(j));
+    }
+    LAD_GEM_hit_nhits = LAD_GEM_hit_xin->size();
 
     outTree->Fill();
   }
