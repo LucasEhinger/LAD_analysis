@@ -1,3 +1,5 @@
+// Plotting scripts used for cosmic test in ESB. Used some for Hall C cosmics, but for those switched to cosmic_histos_hall.C
+
 #include <TFile.h>
 #include <TH1.h>
 #include <TH2.h>
@@ -7,7 +9,7 @@
 using namespace ROOT;
 using namespace std;
 
-const int NUM_BARS   = 8;
+const int NUM_BARS   = 11;
 const int N_DATA_MAX = 100;
 
 const int MAX_WAVEFORM_LENGTH = 5000;
@@ -39,8 +41,8 @@ static const Double_t adcTimeRes      = 0.0625;                     // FADC time
 static const Double_t adcChanTopC     = (adcDynamicRange / 1000 / nAdcChan) * (adcTimeSample / adcImpedence);
 // (1000 mV / 4096 adc channels) * (4 ns time sample / 50 ohms input resistance) = ~0.020 pc/channel
 
-static const int MIN_NUM_PMTS_FIRED = 10;
-static const int MAX_NOISY_PMTS     = 22;
+static const int MIN_NUM_PMTS_FIRED = 4;
+static const int MAX_NOISY_PMTS     = 0;
 
 void cosmic_histos(int run_number) {
   // int run_number = 70;
@@ -48,14 +50,14 @@ void cosmic_histos(int run_number) {
 
   // Open the input file
   string input_string =
-      "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_cosmic_" + to_string(run_number) + "_-1.root";
+      "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_cosmic_hall_" + to_string(run_number) + "_-1.root";
   TFile *inputFile = TFile::Open(input_string.c_str(), "READ");
 
   // Get the TTree from the input file
   TTree *tree = dynamic_cast<TTree *>(inputFile->Get("T"));
 
   // Create a new output file
-  string output_string = "cosmic_histos_" + to_string(run_number) + "_output.root";
+  string output_string = "../histos/cosmic_histos_" + to_string(run_number) + "_output.root";
   TFile *outputFile    = TFile::Open(output_string.c_str(), "RECREATE");
   // Create directories for each type of histogram
   TDirectory *pedDir             = outputFile->mkdir("Ped");
@@ -206,23 +208,23 @@ void cosmic_histos(int run_number) {
   int n_data_btm;
   bool plottedWaveform = false;
 
-  tree->SetBranchAddress("L.hod.000.BtmAdcCounter", Btm_ADC_Counter);
-  tree->SetBranchAddress("L.hod.000.BtmAdcPed", Btm_ADC_Ped);
-  tree->SetBranchAddress("L.hod.000.BtmAdcPulseInt", Btm_ADC_Pulse_Int);
-  tree->SetBranchAddress("L.hod.000.BtmAdcPulseAmp", Btm_ADC_Pulse_Amp);
-  tree->SetBranchAddress("L.hod.000.BtmAdcPulseTime", Btm_ADC_Pulse_Time);
+  tree->SetBranchAddress("L.hod.200.BtmAdcCounter", Btm_ADC_Counter);
+  tree->SetBranchAddress("L.hod.200.BtmAdcPed", Btm_ADC_Ped);
+  tree->SetBranchAddress("L.hod.200.BtmAdcPulseInt", Btm_ADC_Pulse_Int);
+  tree->SetBranchAddress("L.hod.200.BtmAdcPulseAmp", Btm_ADC_Pulse_Amp);
+  tree->SetBranchAddress("L.hod.200.BtmAdcPulseTime", Btm_ADC_Pulse_Time);
 
-  tree->SetBranchAddress("L.hod.000.TopAdcCounter", Top_ADC_Counter);
-  tree->SetBranchAddress("L.hod.000.TopAdcPed", Top_ADC_Ped);
-  tree->SetBranchAddress("L.hod.000.TopAdcPulseInt", Top_ADC_Pulse_Int);
-  tree->SetBranchAddress("L.hod.000.TopAdcPulseAmp", Top_ADC_Pulse_Amp);
-  tree->SetBranchAddress("L.hod.000.TopAdcPulseTime", Top_ADC_Pulse_Time);
+  tree->SetBranchAddress("L.hod.200.TopAdcCounter", Top_ADC_Counter);
+  tree->SetBranchAddress("L.hod.200.TopAdcPed", Top_ADC_Ped);
+  tree->SetBranchAddress("L.hod.200.TopAdcPulseInt", Top_ADC_Pulse_Int);
+  tree->SetBranchAddress("L.hod.200.TopAdcPulseAmp", Top_ADC_Pulse_Amp);
+  tree->SetBranchAddress("L.hod.200.TopAdcPulseTime", Top_ADC_Pulse_Time);
 
-  tree->SetBranchAddress("Ndata.L.hod.000.BtmAdcCounter", &n_data_btm);
-  tree->SetBranchAddress("Ndata.L.hod.000.TopAdcCounter", &n_data_top);
+  tree->SetBranchAddress("Ndata.L.hod.200.BtmAdcCounter", &n_data_btm);
+  tree->SetBranchAddress("Ndata.L.hod.200.TopAdcCounter", &n_data_top);
 
-  tree->SetBranchAddress("L.hod.000.adcBtmSampWaveform", &Btm_ADC_Waveform);
-  tree->SetBranchAddress("L.hod.000.adcTopSampWaveform", &Top_ADC_Waveform);
+  tree->SetBranchAddress("L.hod.200.adcBtmSampWaveform", &Btm_ADC_Waveform);
+  tree->SetBranchAddress("L.hod.200.adcTopSampWaveform", &Top_ADC_Waveform);
 
   // Get average times of top and bottom
   int n_ev_used_top[NUM_BARS] = {0};

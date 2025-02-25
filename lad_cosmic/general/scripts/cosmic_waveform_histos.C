@@ -9,7 +9,7 @@ using namespace ROOT;
 using namespace std;
 
 const int MAX_WAVEFORM_LENGTH = 5000;
-const int NUM_EVENTS_TO_USE   = 10; // Number of events to show the events for. -1 for all of them.
+const int NUM_EVENTS_TO_USE   = 50; // Number of events to show the events for. -1 for all of them.
 
 static const Double_t adcDynamicRange = 1000.0;                     // Units of mV
 static const Double_t nAdcChan        = 4096.0;                     // Units of ADC channels
@@ -23,14 +23,14 @@ static const Double_t adcChanTopC     = (adcDynamicRange / 1000 / nAdcChan) * (a
 void cosmic_waveform_histos(int run_number) {
   // Open the input file
   string input_string =
-      "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_cosmic_" + to_string(run_number) + "_-1.root";
+      "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_cosmic_hall_" + to_string(run_number) + "_-1.root";
   TFile *inputFile = TFile::Open(input_string.c_str(), "READ");
 
   // Get the TTree from the input file
   TTree *tree = dynamic_cast<TTree *>(inputFile->Get("T"));
 
   // Create a new output file
-  string output_string = "waveform_histos_" + to_string(run_number) + "_output.root";
+  string output_string = "../histos/waveform_histos_" + to_string(run_number) + "_output.root";
   TFile *outputFile    = TFile::Open(output_string.c_str(), "RECREATE");
   // Create directories for each type of histogram
   TDirectory *indivEventWaveform = outputFile->mkdir("Indiv_Event_Waveform");
@@ -39,8 +39,8 @@ void cosmic_waveform_histos(int run_number) {
   Double_t Top_ADC_Waveform[MAX_WAVEFORM_LENGTH] = {0};
 
   // Create directories for each type of histogram
-  tree->SetBranchAddress("L.hod.000.adcBtmSampWaveform", &Btm_ADC_Waveform);
-  tree->SetBranchAddress("L.hod.000.adcTopSampWaveform", &Top_ADC_Waveform);
+  tree->SetBranchAddress("L.hod.200.adcBtmSampWaveform", &Btm_ADC_Waveform);
+  tree->SetBranchAddress("L.hod.200.adcTopSampWaveform", &Top_ADC_Waveform);
 
   // Loop over the TTree entries
   for (int i_evt = 0; i_evt < tree->GetEntries(); i_evt++) {
