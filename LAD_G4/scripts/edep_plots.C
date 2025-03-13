@@ -1,36 +1,46 @@
-#include <TCanvas.h>
 #include <TFile.h>
-#include <TGraph.h>
-#include <TH1D.h>
+#include <TH2D.h>
 #include <TTree.h>
-#include <TText.h>
-#include <TLegend.h>
+#include <algorithm>
 #include <iostream>
 #include <string>
 #include <vector>
-#include <algorithm>
 
-const int paddle_num = 10000;
+using namespace std;
+
+const int t_bins = 100;
+const int e_bins = 100;
+const double t_min = 0;
+const double t_max = 20;
+const double e_min = 0;
+const double e_max = 30;
+
 
 void edep_plots() {
-  double energies[] = {300, 400, 500, 600, 700};
+  double momenta[]    = {300, 400, 500, 600, 700};
   std::string fileloc = "/volatile/hallc/c-lad/ehingerl/G4_LAD/carlos_proton/ana/";
   std::vector<std::string> filenames;
-  for (const auto &energy : energies) {
+  for (const auto &energy : momenta) {
     filenames.push_back(fileloc + "ScanLAD_proton_" + std::to_string(static_cast<int>(energy)) +
                         "MeV_10k_20240205_ana.root");
   }
 
-  TCanvas *c2 = new TCanvas("c2", "Energy Deposition vs. Time of Flight", 800, 600);
-  TLegend *legend = new TLegend(0.7, 0.7, 0.9, 0.9);
-  int colors[] = {kRed, kBlue, kGreen, kMagenta, kCyan};
+  int colors[]    = {kRed, kBlue, kGreen, kMagenta, kCyan};
 
   double min_time = std::numeric_limits<double>::max();
   double max_time = std::numeric_limits<double>::lowest();
   double min_edep = std::numeric_limits<double>::max();
   double max_edep = std::numeric_limits<double>::lowest();
 
-  std::vector<TGraph*> graphs;
+  std::vector<TH2D *> histograms;
+  //Add histograms here. Adding inside loop caused unknown seg fault.
+  for (size_t idx = 0; idx < filenames.size(); ++idx) {
+    TH2D *hist_edep_vs_time =
+      new TH2D(Form("hist_%d", static_cast<int>(momenta[idx])),
+           "Energy Deposition vs. Time of Flight;Time of Flight (ns);Energy Deposition / 5 cm", t_bins, t_min, t_max, e_bins, e_min, e_max);
+    histograms.push_back(hist_edep_vs_time);
+  }
+
 
   for (size_t idx = 0; idx < filenames.size(); ++idx) {
     const auto &filename = filenames[idx];
@@ -40,67 +50,91 @@ void edep_plots() {
       continue;
     }
 
-    TTree *tree;
-    file.GetObject("T", tree); // Replace "tree_name" with the actual name of the tree
+    TTree *tree = nullptr;
+    file.GetObject("T", tree);
     if (!tree) {
       std::cerr << "Error: Could not find tree in file " << filename << std::endl;
       file.Close();
       continue;
     }
 
-    std::vector<double> *edep = nullptr;
-    std::vector<double> *time = nullptr;
+    std::vector<double> *edep    = nullptr;
+    std::vector<double> *time    = nullptr;
     std::vector<double> *vPaddle = nullptr;
+    std::vector<double> *vXbar   = nullptr;
+    std::vector<double> *vYbar   = nullptr;
+    std::vector<double> *vZbar   = nullptr;
     tree->SetBranchAddress("vEDep", &edep);
     tree->SetBranchAddress("vTbar", &time);
     tree->SetBranchAddress("vPaddle", &vPaddle);
+    tree->SetBranchAddress("vXbar", &vXbar);
+    tree->SetBranchAddress("vYbar", &vYbar);
+    tree->SetBranchAddress("vZbar", &vZbar);
 
-    TGraph *graph_edep_vs_time = new TGraph();
     Long64_t nentries = tree->GetEntries();
-    int point_idx = 0;
     for (Long64_t i = 0; i < nentries; ++i) {
       tree->GetEntry(i);
-      double total_edep = 0;
-      double event_time = 0;
-      bool valid_event = false;
+      std::map<int, double> total_edep;
+      std::map<int, double> event_time;
+      std::map<int, double> event_dist;
       for (size_t j = 0; j < edep->size(); ++j) {
-        if (vPaddle->at(j) == paddle_num) {
-          total_edep += edep->at(j);
-          event_time = time->at(j);
-          valid_event = true;
+        int paddle = vPaddle->at(j);
+        if (total_edep.find(paddle) != total_edep.end()) {
+          total_edep[paddle] += edep->at(j);
+        } else {
+          total_edep[paddle] = edep->at(j);
+          event_time[paddle] = time->at(j);
+          event_dist[paddle] = sqrt(pow(vXbar->at(j), 2) + pow(vYbar->at(j), 2) + pow(vZbar->at(j), 2)) * pow(10, -3);
         }
       }
-      if (valid_event) {
-        double e = total_edep / 5;
-        graph_edep_vs_time->SetPoint(point_idx++, event_time, e);
-        if (event_time < min_time) min_time = event_time;
-        if (event_time > max_time) max_time = event_time;
-        if (e < min_edep) min_edep = e;
-        if (e > max_edep) max_edep = e;
+
+      for (const auto &paddle : total_edep) {
+        double e_pcm  = paddle.second / 5;
+        double tof_pm = event_time[paddle.first] / event_dist[paddle.first];
+        histograms[idx]->Fill(tof_pm, e_pcm);
+        if (tof_pm < min_time)
+          min_time = tof_pm;
+        if (tof_pm > max_time)
+          max_time = tof_pm;
+        if (e_pcm < min_edep)
+          min_edep = e_pcm;
+        if (e_pcm > max_edep)
+          max_edep = e_pcm;
       }
     }
-
-    graph_edep_vs_time->SetMarkerStyle(20 + idx);
-    graph_edep_vs_time->SetMarkerColor(colors[idx]);
-    graph_edep_vs_time->SetLineColor(colors[idx]);
-    graph_edep_vs_time->SetTitle("Energy Deposition vs. Time of Flight;Time of Flight (ns);Energy Deposition / 5 cm");
-    graphs.push_back(graph_edep_vs_time);
-    legend->AddEntry(graph_edep_vs_time, (std::to_string(static_cast<int>(energies[idx])) + " MeV").c_str(), "p");
-
     file.Close();
   }
 
-  for (size_t idx = 0; idx < graphs.size(); ++idx) {
-    if (idx == 0) {
-      graphs[idx]->Draw("AP");
-      graphs[idx]->GetXaxis()->SetLimits(min_time, max_time);
-      graphs[idx]->GetYaxis()->SetRangeUser(min_edep, max_edep);
-    } else {
-      graphs[idx]->Draw("P SAME");
+  // Create a new ROOT file to save the histograms
+  TFile *outputFile = new TFile("../hists/edep_vs_time_of_flight.root", "RECREATE");
+
+  // Create a histogram to store the sum of all histograms
+  TH2D *hist_sum = new TH2D("hist_sum", "Sum of Energy Deposition vs. Time of Flight;Time of Flight (ns);Energy Deposition / 5 cm", t_bins, t_min, t_max, e_bins, e_min, e_max);
+
+  for (size_t idx = 0; idx < histograms.size(); ++idx) {
+    histograms[idx]->Write();
+    cout << "Address of histogram " << idx << ": " << histograms[idx] << endl;
+    hist_sum->Add(histograms[idx]);
+  }
+  // Create a copy of hist_sum with bins less than min_bin set to zero
+  TH2D *hist_sum_min_bin = (TH2D *)hist_sum->Clone("hist_sum_min_bin");
+  int min_bin = 50; // Example value for min_bin
+
+  for (int x = 1; x <= hist_sum_min_bin->GetNbinsX(); ++x) {
+    for (int y = 1; y <= hist_sum_min_bin->GetNbinsY(); ++y) {
+      if (hist_sum_min_bin->GetBinContent(x, y) < min_bin) {
+        hist_sum_min_bin->SetBinContent(x, y, 0);
+      }
     }
   }
 
-  legend->Draw();
-  c2->SaveAs("../hists/edep_vs_time_of_flight.pdf");
-  delete c2;
+  hist_sum_min_bin->Write();
+  hist_sum->Write();
+  outputFile->Close();
+
+  // Clean up
+  for (auto hist : histograms) {
+    delete hist;
+  }
+  delete outputFile;
 }

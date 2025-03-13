@@ -15,8 +15,9 @@ const int nYStrips = 128 * 12 * 2;
 void gem_x_y() {
   // string input_file =
   // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/G4_LAD/carlos_proton/dig/ScanLAD_proton_400MeV_10k_20240205_dig.root";
-  string input_file  = "/u/home/ehingerl/hallc/software/libLADdig/test_scripts/lad_hodo_gem_sim.root";
-  string output_file = "/work/hallc/c-lad/ehingerl/analysis/LAD_G4/hists/GEM_2D_plots_fake.root";
+  // string input_file  = "/u/home/ehingerl/hallc/software/libLADdig/test_scripts/lad_hodo_gem_sim.root";
+  string input_file  = "/volatile/hallc/c-lad/ehingerl/G4_LAD/carlos_proton/dig/ScanLAD_proton_400MeV_10k_20240205_dig_test.root";
+  string output_file = "/work/hallc/c-lad/ehingerl/analysis/LAD_G4/hists/GEM_2D_plots_fake_g4_400MeV_test.root";
 
   TFile *file = TFile::Open(input_file.c_str());
   if (!file || file->IsZombie()) {
