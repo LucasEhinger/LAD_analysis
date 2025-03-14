@@ -31,6 +31,9 @@ static const int INTEGRAL_MAX     = 1000; // pC
 static const int TIME_N_BINS      = 500;
 static const int TIME_MIN         = 0;    // ns
 static const int TIME_MAX         = 1000; // ns
+static const int TDC_TIME_N_BINS  = 500;
+static const int TDC_TIME_MIN     = 0;    // ns
+static const int TDC_TIME_MAX     = 40*1000; // ns
 static const int TIME_DIFF_N_BINS = 50;
 static const int TIME_DIFF_MIN    = -100; // ns
 static const int TIME_DIFF_MAX    = 100;  // ns
@@ -176,7 +179,7 @@ void cosmic_histos_hall(int run_number) {
       h1_Btm_Pulse_Time_TDC[plane_idx][i] =
           new TH1F(Form("Btm_TDC_Pulse_Time_%s_%d", plane_names[plane_idx].c_str(), i),
                    Form("Btm_Pulse_Time_%s_%d; TDC Pulse Time [ns]; Counts", plane_names[plane_idx].c_str(), i),
-                   TIME_N_BINS, TIME_MIN, TIME_MAX);
+                   TDC_TIME_N_BINS, TDC_TIME_MIN, TDC_TIME_MAX);
       h1_Btm_Pulse_Time_Diff[plane_idx][i] =
           new TH1F(Form("Btm_Pulse_Time_Diff_%s_%d", plane_names[plane_idx].c_str(), i),
                    Form("Btm_Pulse_Time_Diff_%s_%d; t_top - t_btm [ns]; Counts", plane_names[plane_idx].c_str(), i),
@@ -200,7 +203,7 @@ void cosmic_histos_hall(int run_number) {
       h1_Top_Pulse_Time_TDC[plane_idx][i] =
           new TH1F(Form("Top_TDC_Pulse_Time_%s_%d", plane_names[plane_idx].c_str(), i),
                    Form("Top_Pulse_Time_%s_%d; TDC Pulse Time [ns]; Counts", plane_names[plane_idx].c_str(), i),
-                   TIME_N_BINS, TIME_MIN, TIME_MAX);
+                   TDC_TIME_N_BINS, TDC_TIME_MIN, TDC_TIME_MAX);
       h1_Top_Pulse_Time_Diff[plane_idx][i] =
           new TH1F(Form("Top_Pulse_Time_Diff_%s_%d", plane_names[plane_idx].c_str(), i),
                    Form("Top_Pulse_Time_Diff_%s_%d; t_top - t_btm [ns]; Counts", plane_names[plane_idx].c_str(), i),
@@ -264,8 +267,8 @@ void cosmic_histos_hall(int run_number) {
 
       h2_Pulse_Time_TDC[plane_idx][i] =
           new TH2D(Form("Pulse_Time_TDC_%s_%d", plane_names[plane_idx].c_str(), i),
-                   Form("Pulse_Time_TDC_%s_%d; Btm [ns]; Top [ns]", plane_names[plane_idx].c_str(), i), TIME_N_BINS,
-                   TIME_MIN, TIME_MAX, TIME_N_BINS, TIME_MIN, TIME_MAX);
+                   Form("Pulse_Time_TDC_%s_%d; Btm [ns]; Top [ns]", plane_names[plane_idx].c_str(), i), TDC_TIME_N_BINS,
+                   TDC_TIME_MIN, TDC_TIME_MAX, TDC_TIME_N_BINS, TDC_TIME_MIN, TDC_TIME_MAX);
 
       h2_Btm_Pulse_Int_Amp[plane_idx][i] =
           new TH2D(Form("Btm_Pulse_Int_Amp_%s_%d", plane_names[plane_idx].c_str(), i),
@@ -484,7 +487,7 @@ void cosmic_histos_hall(int run_number) {
       // Fill histograms (all paddles. Max hit per paddle)
       for (int i = 0; i < NUM_BARS; i++) {
         if (Top_ADC_Int_Max[plane_idx][i] > 0 && Btm_ADC_Int_Max[plane_idx][i] > 0) {
-          if (isGoodHit(plane_idx, i, btm_mult, top_mult)) {
+          if (!isGoodHit(plane_idx, i, btm_mult, top_mult)) {
             continue;
           }
           h1_Btm_Evt_Int[plane_idx][i]->Fill(Btm_ADC_Int_Max[plane_idx][i]);
