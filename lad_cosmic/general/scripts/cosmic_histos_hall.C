@@ -15,14 +15,15 @@ const int NUM_PLANES       = 5;
 const string plane_names[] = {"000", "001", "100", "101", "200"};
 // const int NUM_PLANES       = 1;
 // const string plane_names[] = {"200"};
-string hodo_name = "L.ladhod"; //"L.hod";
+string hodo_name       = "L.ladhod"; //"L.hod";
+int n_ajacent_required = 3;
 
 const int MAX_WAVEFORM_LENGTH = 5000;
 
 static const int PED_N_BINS       = 50;
 static const int PED_MIN          = 0;   // mV
 static const int PED_MAX          = 100; // mV
-static const int AMP_N_BINS       = 50;
+static const int AMP_N_BINS       = 200;
 static const int AMP_MIN          = 0;    // mV
 static const int AMP_MAX          = 2000; // mV
 static const int INTEGRAL_N_BINS  = 50;
@@ -32,8 +33,8 @@ static const int TIME_N_BINS      = 500;
 static const int TIME_MIN         = 0;    // ns
 static const int TIME_MAX         = 1000; // ns
 static const int TDC_TIME_N_BINS  = 500;
-static const int TDC_TIME_MIN     = 0;    // ns
-static const int TDC_TIME_MAX     = 40*1000; // ns
+static const int TDC_TIME_MIN     = 0;         // ns
+static const int TDC_TIME_MAX     = 40 * 1000; // ns
 static const int TIME_DIFF_N_BINS = 50;
 static const int TIME_DIFF_MIN    = -100; // ns
 static const int TIME_DIFF_MAX    = 100;  // ns
@@ -56,17 +57,32 @@ bool isGoodHit(int plane_idx, int paddle_indx, int btm_mult[NUM_PLANES][NUM_BARS
   if (btm_mult[plane_idx][paddle_indx] == 0 || top_mult[plane_idx][paddle_indx] == 0) {
     return false;
   }
-  return true; //TEMP FIX: Only requiring PMT coincidence on bar
+  int n_adjacent_hit  = 0;
   bool adjacent_fired = false;
-  if (paddle_indx > 0) {
-    adjacent_fired =
-        adjacent_fired || (btm_mult[plane_idx][paddle_indx - 1] > 0 && top_mult[plane_idx][paddle_indx - 1] > 0);
+  int paddle_indx_tmp = paddle_indx + 1;
+  while (paddle_indx_tmp < NUM_BARS && btm_mult[plane_idx][paddle_indx_tmp] > 0 &&
+         top_mult[plane_idx][paddle_indx_tmp] > 0) {
+    n_adjacent_hit++;
+    paddle_indx_tmp++;
   }
-  if (paddle_indx < NUM_BARS - 1) {
-    adjacent_fired =
-        adjacent_fired || (btm_mult[plane_idx][paddle_indx + 1] > 0 && top_mult[plane_idx][paddle_indx + 1] > 0);
+  paddle_indx_tmp = paddle_indx - 1;
+  while (paddle_indx_tmp >= 0 && btm_mult[plane_idx][paddle_indx_tmp] > 0 && top_mult[plane_idx][paddle_indx_tmp] > 0) {
+    n_adjacent_hit++;
+    paddle_indx_tmp--;
+  }
+  if (n_adjacent_hit >= n_ajacent_required) {
+    adjacent_fired = true;
   }
   return adjacent_fired;
+  // if (paddle_indx > 0) {
+  //   adjacent_fired =
+  //       adjacent_fired || (btm_mult[plane_idx][paddle_indx - 1] > 0 && top_mult[plane_idx][paddle_indx - 1] > 0);
+  // }
+  // if (paddle_indx < NUM_BARS - 1) {
+  //   adjacent_fired =
+  //       adjacent_fired || (btm_mult[plane_idx][paddle_indx + 1] > 0 && top_mult[plane_idx][paddle_indx + 1] > 0);
+  // }
+  // return adjacent_fired;
 }
 
 void cosmic_histos_hall(int run_number) {
@@ -75,13 +91,15 @@ void cosmic_histos_hall(int run_number) {
 
   // Open the input file
   string input_string =
-      "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_cosmic_hall_" + to_string(run_number) + "_-1.root";
+  "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_wREF_cosmic_hall_" + to_string(run_number) + "_-1.root";
+
+      // "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_cosmic_hall_" + to_string(run_number) + "_-1.root";
   TFile *inputFile = TFile::Open(input_string.c_str(), "READ");
 
   // Get the TTree from the input file
   TTree *tree = dynamic_cast<TTree *>(inputFile->Get("T"));
   // Create a new output file
-  string output_string = "../histos/cosmic_histos_" + to_string(run_number) + "_output.root";
+  string output_string = "../histos/cosmic_histos_wREF_" + to_string(run_number) + "_output.root";
   TFile *outputFile    = TFile::Open(output_string.c_str(), "RECREATE");
   // Create directories for each type of histogram
   TDirectory *pedDir                 = outputFile->mkdir("Ped");

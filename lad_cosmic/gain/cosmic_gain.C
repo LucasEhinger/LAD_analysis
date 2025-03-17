@@ -8,6 +8,7 @@
 #include <TROOT.h>
 #include <TTree.h>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 
@@ -18,17 +19,14 @@ const static int N_BARS           = 11;
 const static int N_PLANES         = 5;
 const static string plane_names[] = {"000", "001", "100", "101", "200"};
 
-const static int N_DATA_MAX = 100;
-const static int AMP_N_BINS = 300;
-const static int AMP_MIN    = 0;
-const static int AMP_MAX    = 3000;
+const static int AMP_MAX_LOWER = 10;
+const static int AMP_MAX_UPPER = 990;
 
-const static int AMP_MAX_LOWER = 50;
-const static int AMP_MAX_UPPER = 1000;
-
-const static bool use_median   = true;
-const static double TARGET_ADC = 100;
-const static int N_POINTS_FIT  = 10;
+const static bool use_median              = true;
+const static double TARGET_ADC            = 100;
+const static int N_POINTS_FIT             = 10;
+const static int MIN_N_ENTRIES_HISTO_MODE = 100;
+const static int FONT_SIZE                = -1;
 
 const static string voltage_file_name = "pmt_voltages.csv";
 
@@ -96,6 +94,12 @@ void getModesPane(TFile *file, int plane_idx, int run_idx, vector<vector<double>
         max_amp = AMP_MAX_UPPER;
       amplitudes_top[N_BARS * plane_idx + i][run_idx] = max_amp;
     }
+    if (h1_amp_top->GetEntries() < MIN_N_ENTRIES_HISTO_MODE) {
+      amplitudes_top[N_BARS * plane_idx + i][run_idx] = -1;
+    }
+    if (h1_amp_btm->GetEntries() < MIN_N_ENTRIES_HISTO_MODE) {
+      amplitudes_btm[N_BARS * plane_idx + i][run_idx] = -1;
+    }
   }
 }
 
@@ -125,11 +129,11 @@ double doLinFit(double *x, double *y, int n, double *xout, double *yout) {
 }
 
 double doExpFit(double *x, double *y, int n, double *xout, double *yout) {
-  double sum_x = 0;
-  double sum_y = 0;
-  double sum_x2 = 0;
-  double sum_xy = 0;
-  double sum_ln_y = 0;
+  double sum_x      = 0;
+  double sum_y      = 0;
+  double sum_x2     = 0;
+  double sum_xy     = 0;
+  double sum_ln_y   = 0;
   double sum_x_ln_y = 0;
 
   for (int i = 0; i < n; i++) {
@@ -142,8 +146,8 @@ double doExpFit(double *x, double *y, int n, double *xout, double *yout) {
   }
 
   double denom = n * sum_x2 - sum_x * sum_x;
-  double a = (sum_x2 * sum_ln_y - sum_x * sum_x_ln_y) / denom;
-  double b = (n * sum_x_ln_y - sum_x * sum_ln_y) / denom;
+  double a     = (sum_x2 * sum_ln_y - sum_x * sum_x_ln_y) / denom;
+  double b     = (n * sum_x_ln_y - sum_x * sum_ln_y) / denom;
 
   a = exp(a);
 
@@ -191,35 +195,34 @@ void cosmic_gain() {
   vector<double> voltage_target_top(N_BARS * N_PLANES, 0);
   vector<double> voltage_target_btm(N_BARS * N_PLANES, 0);
 
-  // Skip the header line
-  getline(voltage_file, line);
-
   int paddle_num;
   bool top;
-  for (int i = 0; i < N_BARS * N_PLANES; ++i) {
+
+  for (int i = 0; i < N_BARS * N_PLANES * 2; ++i) {
+
     getline(voltage_file, line);
-    stringstream ss(line);
-    string cell;
+    stringstream ss2(line);
+    string cell2;
 
     // Read paddle number
-    getline(ss, cell, ',');
-    if (cell.back() == 'U') {
+    getline(ss2, cell2, ',');
+    if (cell2.back() == 'U') {
       top = true;
-    } else if (cell.back() == 'D') {
+    } else if (cell2.back() == 'D') {
       top = false;
     } else {
-      cerr << "Error: Invalid paddle identifier " << cell << endl;
+      cerr << "Error: Invalid paddle identifier " << cell2 << endl;
       continue;
     }
-    int paddle_idx = paddle_ID_to_idx(stoi(cell.substr(0, cell.size() - 1)));
+    int paddle_idx = paddle_ID_to_idx(stoi(cell2.substr(0, cell2.size() - 1)));
 
     // Read voltages for each run
     for (int j = 0; j < n_runs; ++j) {
-      getline(ss, cell, ',');
+      getline(ss2, cell2, ',');
       if (top) {
-        voltages_top[paddle_idx][j] = stod(cell);
+        voltages_top[paddle_idx][j] = stod(cell2);
       } else {
-        voltages_btm[paddle_idx][j] = stod(cell);
+        voltages_btm[paddle_idx][j] = stod(cell2);
       }
     }
   }
@@ -227,7 +230,7 @@ void cosmic_gain() {
   voltage_file.close();
 
   for (int run_idx = 0; run_idx < n_runs; run_idx++) {
-    string run_file = path + "cosmic_histos_" + to_string(run_numbers[run_idx]) + "_output.root";
+    string run_file = path + "cosmic_histos_wREF_" + to_string(run_numbers[run_idx]) + "_output.root";
     TFile *file     = new TFile(run_file.c_str());
     for (int plane_idx = 0; plane_idx < N_PLANES; plane_idx++) {
       getModesPane(file, plane_idx, run_idx, amplitudes_btm, amplitudes_top);
@@ -253,20 +256,31 @@ void cosmic_gain() {
         graphs_top[bar_num][i] = new TGraph(1);
         if (amplitudes_top[N_BARS * plane_idx + bar_num][i] > 0)
           graphs_top[bar_num][i]->SetPoint(0, voltages_top[N_BARS * plane_idx + bar_num][i],
-                                           amplitudes_top[N_BARS * plane_idx + bar_num][i]);
+                   amplitudes_top[N_BARS * plane_idx + bar_num][i]);
 
         graphs_top[bar_num][i]->SetMarkerColor(i + 1);
         graphs_top[bar_num][i]->SetMarkerStyle(20);
 
         graphs_top[bar_num][i]->SetTitle(Form("Bar %d; Voltage [mV]; Peak Amplitude [mV]", bar_num));
         double min_voltage = *min_element(voltages_top[N_BARS * plane_idx + bar_num].begin(),
-                                          voltages_top[N_BARS * plane_idx + bar_num].end()) -
-                             50;
+                  voltages_top[N_BARS * plane_idx + bar_num].end()) -
+                 50;
         double max_voltage = *max_element(voltages_top[N_BARS * plane_idx + bar_num].begin(),
-                                          voltages_top[N_BARS * plane_idx + bar_num].end()) +
-                             50;
+                  voltages_top[N_BARS * plane_idx + bar_num].end()) +
+                 50;
+        double min_amplitude = *min_element(amplitudes_top[N_BARS * plane_idx + bar_num].begin(),
+                    amplitudes_top[N_BARS * plane_idx + bar_num].end()) -
+               10;
+        double max_amplitude = *max_element(amplitudes_top[N_BARS * plane_idx + bar_num].begin(),
+                    amplitudes_top[N_BARS * plane_idx + bar_num].end()) +
+               10;
         graphs_top[bar_num][i]->GetXaxis()->SetLimits(min_voltage, max_voltage);
-        graphs_top[bar_num][i]->GetYaxis()->SetRangeUser(AMP_MAX_LOWER - 10, AMP_MAX_UPPER + 10);
+        graphs_top[bar_num][i]->GetYaxis()->SetRangeUser(min_amplitude, max_amplitude);
+        
+        if(FONT_SIZE > 0) {
+          graphs_top[bar_num][i]->GetXaxis()->SetLabelSize(FONT_SIZE);
+          graphs_top[bar_num][i]->GetYaxis()->SetLabelSize(FONT_SIZE);
+        }
 
         if (i == 0) {
           graphs_top[bar_num][i]->Draw("AP");
@@ -314,7 +328,8 @@ void cosmic_gain() {
             fit_graphs_top[bar_num]->SetPoint(i, x_vals[i], y_vals[i]);
           }
           fit_graphs_top[bar_num]->Draw("L SAME");
-          legend_top->AddEntry(fit_graphs_top[bar_num], "Fit", "L");
+          if (bar_num == 0)
+            legend_top->AddEntry(fit_graphs_top[bar_num], "Fit", "L");
         }
         delete[] y_vals;
       }
@@ -358,15 +373,26 @@ void cosmic_gain() {
         graphs_btm[bar_num][i]->SetMarkerColor(i + 1);
         graphs_btm[bar_num][i]->SetMarkerStyle(20);
 
-        graphs_btm[bar_num][i]->SetTitle(Form("Bar %d; Voltage [V]; Peak Amplitude [mV]", bar_num));
+        graphs_btm[bar_num][i]->SetTitle(Form("Bar %d; Voltage [mV]; Peak Amplitude [mV]", bar_num));
         double min_voltage = *min_element(voltages_btm[N_BARS * plane_idx + bar_num].begin(),
                                           voltages_btm[N_BARS * plane_idx + bar_num].end()) -
                              50;
         double max_voltage = *max_element(voltages_btm[N_BARS * plane_idx + bar_num].begin(),
                                           voltages_btm[N_BARS * plane_idx + bar_num].end()) +
                              50;
+        double min_amplitude = *min_element(amplitudes_btm[N_BARS * plane_idx + bar_num].begin(),
+                                            amplitudes_btm[N_BARS * plane_idx + bar_num].end()) -
+                               10;
+        double max_amplitude = *max_element(amplitudes_btm[N_BARS * plane_idx + bar_num].begin(),
+                                            amplitudes_btm[N_BARS * plane_idx + bar_num].end()) +
+                               10;
         graphs_btm[bar_num][i]->GetXaxis()->SetLimits(min_voltage, max_voltage);
-        graphs_btm[bar_num][i]->GetYaxis()->SetRangeUser(AMP_MAX_LOWER - 10, AMP_MAX_UPPER + 10);
+        graphs_btm[bar_num][i]->GetYaxis()->SetRangeUser(min_amplitude, max_amplitude);
+
+        if(FONT_SIZE > 0) {
+          graphs_btm[bar_num][i]->GetXaxis()->SetLabelSize(FONT_SIZE);
+          graphs_btm[bar_num][i]->GetYaxis()->SetLabelSize(FONT_SIZE);
+        }
 
         if (i == 0) {
           graphs_btm[bar_num][i]->Draw("AP");
@@ -414,7 +440,8 @@ void cosmic_gain() {
             fit_graphs_btm[bar_num]->SetPoint(i, x_vals[i], y_vals[i]);
           }
           fit_graphs_btm[bar_num]->Draw("L SAME");
-          legend_btm->AddEntry(fit_graphs_btm[bar_num], "Fit", "L");
+          if (bar_num == 0)
+            legend_btm->AddEntry(fit_graphs_btm[bar_num], "Fit", "L");
         }
         delete[] y_vals;
       }
@@ -456,10 +483,13 @@ void cosmic_gain() {
 
   cout << "Delete Worked" << endl;
 
-  ofstream csv_file("voltage_corrections.csv");
-  csv_file << "Bar,Top Voltage Correction,Bottom Voltage Correction\n";
-  for (int bar_num = 0; bar_num < N_BARS; bar_num++) {
-    csv_file << bar_num + 1 << "," << voltage_target_top[bar_num] << "," << voltage_target_btm[bar_num] << "\n";
+  ofstream csv_file("files/target_voltages_corrections.csv");
+  csv_file << "Bar, Voltage\n";
+  for (int i = 0; i < N_PLANES; i++) {
+    for (int j = 0; j < N_BARS; j++) {
+      csv_file << plane_names[i] << setw(2) << setfill('0') << j << "U, " << voltage_target_top[N_BARS * i + j] << "\n";
+      csv_file << plane_names[i] << setw(2) << setfill('0') << j << "D, " << voltage_target_btm[N_BARS * i + j] << "\n";
+    }
   }
   csv_file.close();
 }
