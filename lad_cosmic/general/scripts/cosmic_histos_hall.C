@@ -33,8 +33,8 @@ static const int TIME_N_BINS      = 500;
 static const int TIME_MIN         = 0;    // ns
 static const int TIME_MAX         = 1000; // ns
 static const int TDC_TIME_N_BINS  = 500;
-static const int TDC_TIME_MIN     = 0;         // ns
-static const int TDC_TIME_MAX     = 40 * 1000; // ns
+static const int TDC_TIME_MIN     = -10 * 1000; // ns
+static const int TDC_TIME_MAX     = 40 * 1000;  // ns
 static const int TIME_DIFF_N_BINS = 50;
 static const int TIME_DIFF_MIN    = -100; // ns
 static const int TIME_DIFF_MAX    = 100;  // ns
@@ -91,9 +91,9 @@ void cosmic_histos_hall(int run_number) {
 
   // Open the input file
   string input_string =
-  "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_wREF_cosmic_hall_" + to_string(run_number) + "_-1.root";
+      "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_wREF_cosmic_hall_" + to_string(run_number) + "_-1.root";
 
-      // "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_cosmic_hall_" + to_string(run_number) + "_-1.root";
+  // "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_cosmic_hall_" + to_string(run_number) + "_-1.root";
   TFile *inputFile = TFile::Open(input_string.c_str(), "READ");
 
   // Get the TTree from the input file
@@ -463,9 +463,9 @@ void cosmic_histos_hall(int run_number) {
       // Fill histograms (all hits)
       for (int i = 0; i < n_data_btm[plane_idx]; i++) {
         int paddle_indx = Btm_ADC_Counter[plane_idx][i] - 1;
-        if (!isGoodHit(plane_idx, paddle_indx, btm_mult, top_mult)) {
-          continue;
-        }
+        // if (!isGoodHit(plane_idx, paddle_indx, btm_mult, top_mult)) {
+        //   continue;
+        // }
 
         h1_Btm_Ped[plane_idx][paddle_indx]->Fill(Btm_ADC_Ped[plane_idx][i]);
         h1_Btm_Pulse_Int[plane_idx][paddle_indx]->Fill(Btm_ADC_Pulse_Int[plane_idx][i]);
@@ -476,9 +476,9 @@ void cosmic_histos_hall(int run_number) {
       }
       for (int i = 0; i < n_data_top[plane_idx]; i++) {
         int paddle_indx = Top_ADC_Counter[plane_idx][i] - 1;
-        if (!isGoodHit(plane_idx, paddle_indx, btm_mult, top_mult)) {
-          continue;
-        }
+        // if (!isGoodHit(plane_idx, paddle_indx, btm_mult, top_mult)) {
+        //   continue;
+        // }
         h1_Top_Ped[plane_idx][paddle_indx]->Fill(Top_ADC_Ped[plane_idx][i]);
         h1_Top_Pulse_Int[plane_idx][paddle_indx]->Fill(Top_ADC_Pulse_Int[plane_idx][i]);
         h1_Top_Pulse_Amp[plane_idx][paddle_indx]->Fill(Top_ADC_Pulse_Amp[plane_idx][i]);
@@ -489,16 +489,16 @@ void cosmic_histos_hall(int run_number) {
 
       for (int i = 0; i < n_data_btm_tdc[plane_idx]; i++) {
         int paddle_indx = Btm_TDC_Counter[plane_idx][i] - 1;
-        if (!isGoodHit(plane_idx, paddle_indx, btm_mult, top_mult)) {
-          continue;
-        }
+        // if (!isGoodHit(plane_idx, paddle_indx, btm_mult, top_mult)) {
+        //   continue;
+        // }
         h1_Btm_Pulse_Time_TDC[plane_idx][paddle_indx]->Fill(Btm_TDC_Pulse_Time[plane_idx][i]);
       }
       for (int i = 0; i < n_data_top_tdc[plane_idx]; i++) {
         int paddle_indx = Top_TDC_Counter[plane_idx][i] - 1;
-        if (!isGoodHit(plane_idx, paddle_indx, btm_mult, top_mult)) {
-          continue;
-        }
+        // if (!isGoodHit(plane_idx, paddle_indx, btm_mult, top_mult)) {
+        //   continue;
+        // }
         h1_Top_Pulse_Time_TDC[plane_idx][paddle_indx]->Fill(Top_TDC_Pulse_Time[plane_idx][i]);
       }
 
@@ -575,7 +575,9 @@ void cosmic_histos_hall(int run_number) {
         }
       }
       // if (num_fired_pmts == 16 && !plottedWaveform) {
-      if (i_evt < 20) {
+      // if (i_evt < 20) {
+      // BAR 000102D
+      if (!plottedWaveform[plane_idx]) {
         plottedWaveform[plane_idx] = true;
         indivEventWaveform->cd();
         int indx = 0;
@@ -587,6 +589,9 @@ void cosmic_histos_hall(int run_number) {
           for (int i = 0; i < n_samples; i++) {
             h1_btm_waveform.Fill(i * adcTimeSample, Btm_ADC_Waveform[plane_idx][indx + i] * adcChanTomV);
           }
+          // if(btm_paddle_indx != 2 && plane_idx != 1){
+          //   continue;
+          // }
           h1_btm_waveform.Write();
           indx += n_samples;
         }
@@ -599,6 +604,9 @@ void cosmic_histos_hall(int run_number) {
           for (int i = 0; i < n_samples; i++) {
             h1_top_waveform.Fill(i * adcTimeSample, Top_ADC_Waveform[plane_idx][indx + i] * adcChanTomV);
           }
+          // if(top_paddle_indx != 2 && plane_idx != 1){
+          //   continue;
+          // }
           h1_top_waveform.Write();
           indx += n_samples;
         }

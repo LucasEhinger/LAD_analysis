@@ -23,7 +23,8 @@ static const Double_t adcChanTopC     = (adcDynamicRange / 1000 / nAdcChan) * (a
 void cosmic_waveform_histos(int run_number) {
   // Open the input file
   string input_string =
-      "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_cosmic_hall_" + to_string(run_number) + "_-1.root";
+  "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_wREF_cosmic_hall_" + to_string(run_number) + "_-1.root";
+      // "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_cosmic_hall_" + to_string(run_number) + "_-1.root";
   TFile *inputFile = TFile::Open(input_string.c_str(), "READ");
 
   // Get the TTree from the input file
