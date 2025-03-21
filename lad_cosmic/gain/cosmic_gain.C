@@ -4,6 +4,7 @@
 #include <TH1.h>
 #include <TH2.h>
 #include <TLegend.h>
+#include <TLine.h>
 #include <TPaveText.h>
 #include <TROOT.h>
 #include <TTree.h>
@@ -69,14 +70,14 @@ void getModesPane(TFile *file, int plane_idx, int run_idx, vector<vector<double>
         median = AMP_MAX_LOWER;
       if (median > AMP_MAX_UPPER)
         median = AMP_MAX_UPPER;
-      amplitudes_btm[N_BARS * plane_idx + i][run_idx] = median;
+      amplitudes_top[N_BARS * plane_idx + i][run_idx] = median;
 
       h1_amp_btm->GetQuantiles(1, &median, &q);
       if (median < AMP_MAX_LOWER)
         median = AMP_MAX_LOWER;
       if (median > AMP_MAX_UPPER)
         median = AMP_MAX_UPPER;
-      amplitudes_top[N_BARS * plane_idx + i][run_idx] = median;
+      amplitudes_btm[N_BARS * plane_idx + i][run_idx] = median;
     } else { // Get maximum
       int max_bin    = h1_amp_top->GetMaximumBin();
       double max_amp = h1_amp_top->GetBinCenter(max_bin);
@@ -84,7 +85,7 @@ void getModesPane(TFile *file, int plane_idx, int run_idx, vector<vector<double>
         max_amp = AMP_MAX_LOWER;
       if (max_amp > AMP_MAX_UPPER)
         max_amp = AMP_MAX_UPPER;
-      amplitudes_btm[N_BARS * plane_idx + i][run_idx] = max_amp;
+      amplitudes_top[N_BARS * plane_idx + i][run_idx] = max_amp;
 
       max_bin = h1_amp_btm->GetMaximumBin();
       max_amp = h1_amp_btm->GetBinCenter(max_bin);
@@ -92,7 +93,7 @@ void getModesPane(TFile *file, int plane_idx, int run_idx, vector<vector<double>
         max_amp = AMP_MAX_LOWER;
       if (max_amp > AMP_MAX_UPPER)
         max_amp = AMP_MAX_UPPER;
-      amplitudes_top[N_BARS * plane_idx + i][run_idx] = max_amp;
+      amplitudes_btm[N_BARS * plane_idx + i][run_idx] = max_amp;
     }
     if (h1_amp_top->GetEntries() < MIN_N_ENTRIES_HISTO_MODE) {
       amplitudes_top[N_BARS * plane_idx + i][run_idx] = -1;
@@ -256,28 +257,30 @@ void cosmic_gain() {
         graphs_top[bar_num][i] = new TGraph(1);
         if (amplitudes_top[N_BARS * plane_idx + bar_num][i] > 0)
           graphs_top[bar_num][i]->SetPoint(0, voltages_top[N_BARS * plane_idx + bar_num][i],
-                   amplitudes_top[N_BARS * plane_idx + bar_num][i]);
+                                           amplitudes_top[N_BARS * plane_idx + bar_num][i]);
 
         graphs_top[bar_num][i]->SetMarkerColor(i + 1);
         graphs_top[bar_num][i]->SetMarkerStyle(20);
 
         graphs_top[bar_num][i]->SetTitle(Form("Bar %d; Voltage [mV]; Peak Amplitude [mV]", bar_num));
         double min_voltage = *min_element(voltages_top[N_BARS * plane_idx + bar_num].begin(),
-                  voltages_top[N_BARS * plane_idx + bar_num].end()) -
-                 50;
+                                          voltages_top[N_BARS * plane_idx + bar_num].end()) -
+                             50;
         double max_voltage = *max_element(voltages_top[N_BARS * plane_idx + bar_num].begin(),
-                  voltages_top[N_BARS * plane_idx + bar_num].end()) +
-                 50;
-        double min_amplitude = *min_element(amplitudes_top[N_BARS * plane_idx + bar_num].begin(),
-                    amplitudes_top[N_BARS * plane_idx + bar_num].end()) -
-               10;
-        double max_amplitude = *max_element(amplitudes_top[N_BARS * plane_idx + bar_num].begin(),
-                    amplitudes_top[N_BARS * plane_idx + bar_num].end()) +
-               10;
+                                          voltages_top[N_BARS * plane_idx + bar_num].end()) +
+                             50;
+        double min_amplitude = min(*min_element(amplitudes_top[N_BARS * plane_idx + bar_num].begin(),
+                                                amplitudes_top[N_BARS * plane_idx + bar_num].end()) -
+                                       10,
+                                   TARGET_ADC - 10);
+        double max_amplitude = max(*max_element(amplitudes_top[N_BARS * plane_idx + bar_num].begin(),
+                                                amplitudes_top[N_BARS * plane_idx + bar_num].end()) +
+                                       10,
+                                   TARGET_ADC + 10);
         graphs_top[bar_num][i]->GetXaxis()->SetLimits(min_voltage, max_voltage);
         graphs_top[bar_num][i]->GetYaxis()->SetRangeUser(min_amplitude, max_amplitude);
-        
-        if(FONT_SIZE > 0) {
+
+        if (FONT_SIZE > 0) {
           graphs_top[bar_num][i]->GetXaxis()->SetLabelSize(FONT_SIZE);
           graphs_top[bar_num][i]->GetYaxis()->SetLabelSize(FONT_SIZE);
         }
@@ -313,7 +316,7 @@ void cosmic_gain() {
         double xmax = *max_element(voltages_top[N_BARS * plane_idx + bar_num].begin(),
                                    voltages_top[N_BARS * plane_idx + bar_num].end()) +
                       50;
-        double x_vals[N_POINTS_FIT];
+        double x_vals[N_POINTS_FIT] = {0};
         double step = (xmax - xmin) / (N_POINTS_FIT - 1);
         for (int i = 0; i < N_POINTS_FIT; i++) {
           x_vals[i] = xmin + i * step;
@@ -330,6 +333,12 @@ void cosmic_gain() {
           fit_graphs_top[bar_num]->Draw("L SAME");
           if (bar_num == 0)
             legend_top->AddEntry(fit_graphs_top[bar_num], "Fit", "L");
+
+          TLine *line = new TLine(xmin, TARGET_ADC, xmax, TARGET_ADC);
+          line->SetLineColor(kRed);
+          line->SetLineWidth(2);
+          line->SetLineStyle(2); // Set line style to dashed
+          line->Draw("SAME");
         }
         delete[] y_vals;
       }
@@ -358,7 +367,7 @@ void cosmic_gain() {
     TGraph *graphs_btm[N_BARS][n_runs];
     TGraph *fit_graphs_btm[N_BARS];
 
-    c2->Divide(2, 5);                                      // Divide canvas into 2 columns and 5 rows
+    c2->Divide(2, 6);                                      // Divide canvas into 2 columns and 5 rows
     TLegend *legend_btm = new TLegend(0.1, 0.3, 0.2, 0.9); // Create a legend
     legend_btm->SetHeader("Legend", "C");                  // Set legend header
     for (int bar_num = 0; bar_num < N_BARS; bar_num++) {
@@ -380,16 +389,18 @@ void cosmic_gain() {
         double max_voltage = *max_element(voltages_btm[N_BARS * plane_idx + bar_num].begin(),
                                           voltages_btm[N_BARS * plane_idx + bar_num].end()) +
                              50;
-        double min_amplitude = *min_element(amplitudes_btm[N_BARS * plane_idx + bar_num].begin(),
-                                            amplitudes_btm[N_BARS * plane_idx + bar_num].end()) -
-                               10;
-        double max_amplitude = *max_element(amplitudes_btm[N_BARS * plane_idx + bar_num].begin(),
-                                            amplitudes_btm[N_BARS * plane_idx + bar_num].end()) +
-                               10;
+        double min_amplitude = min(*min_element(amplitudes_btm[N_BARS * plane_idx + bar_num].begin(),
+                                                amplitudes_btm[N_BARS * plane_idx + bar_num].end()) -
+                                       10,
+                                   TARGET_ADC - 10);
+        double max_amplitude = max(*max_element(amplitudes_btm[N_BARS * plane_idx + bar_num].begin(),
+                                                amplitudes_btm[N_BARS * plane_idx + bar_num].end()) +
+                                       10,
+                                   TARGET_ADC + 10);
         graphs_btm[bar_num][i]->GetXaxis()->SetLimits(min_voltage, max_voltage);
         graphs_btm[bar_num][i]->GetYaxis()->SetRangeUser(min_amplitude, max_amplitude);
 
-        if(FONT_SIZE > 0) {
+        if (FONT_SIZE > 0) {
           graphs_btm[bar_num][i]->GetXaxis()->SetLabelSize(FONT_SIZE);
           graphs_btm[bar_num][i]->GetYaxis()->SetLabelSize(FONT_SIZE);
         }
@@ -425,7 +436,7 @@ void cosmic_gain() {
         double xmax = *max_element(voltages_btm[N_BARS * plane_idx + bar_num].begin(),
                                    voltages_btm[N_BARS * plane_idx + bar_num].end()) +
                       50;
-        double x_vals[N_POINTS_FIT];
+        double x_vals[N_POINTS_FIT] = {0};
         double step = (xmax - xmin) / (N_POINTS_FIT - 1);
         for (int i = 0; i < N_POINTS_FIT; i++) {
           x_vals[i] = xmin + i * step;
@@ -442,6 +453,12 @@ void cosmic_gain() {
           fit_graphs_btm[bar_num]->Draw("L SAME");
           if (bar_num == 0)
             legend_btm->AddEntry(fit_graphs_btm[bar_num], "Fit", "L");
+
+          TLine *line = new TLine(xmin, TARGET_ADC, xmax, TARGET_ADC);
+          line->SetLineColor(kRed);
+          line->SetLineWidth(2);
+          line->SetLineStyle(2); // Set line style to dashed
+          line->Draw("SAME");
         }
         delete[] y_vals;
       }
@@ -487,8 +504,10 @@ void cosmic_gain() {
   csv_file << "Bar, Voltage\n";
   for (int i = 0; i < N_PLANES; i++) {
     for (int j = 0; j < N_BARS; j++) {
-      csv_file << plane_names[i] << setw(2) << setfill('0') << j << "U, " << voltage_target_top[N_BARS * i + j] << "\n";
-      csv_file << plane_names[i] << setw(2) << setfill('0') << j << "D, " << voltage_target_btm[N_BARS * i + j] << "\n";
+      csv_file << plane_names[i] << setw(2) << setfill('0') << j << "U, " << round(voltage_target_top[N_BARS * i + j])
+               << "\n";
+      csv_file << plane_names[i] << setw(2) << setfill('0') << j << "D, " << round(voltage_target_btm[N_BARS * i + j])
+               << "\n";
     }
   }
   csv_file.close();
