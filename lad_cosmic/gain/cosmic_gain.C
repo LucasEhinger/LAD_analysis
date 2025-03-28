@@ -16,6 +16,7 @@
 using namespace ROOT;
 using namespace std;
 
+bool is_laser                     = true;
 const static int N_BARS           = 11;
 const static int N_PLANES         = 5;
 const static string plane_names[] = {"000", "001", "100", "101", "200"};
@@ -24,7 +25,7 @@ const static int AMP_MAX_LOWER = 10;
 const static int AMP_MAX_UPPER = 990;
 
 const static bool use_median              = true;
-const static double TARGET_ADC            = 100;
+const static double TARGET_ADC            = 230; //was 100 for cosmic
 const static int N_POINTS_FIT             = 10;
 const static int MIN_N_ENTRIES_HISTO_MODE = 100;
 const static int FONT_SIZE                = -1;
@@ -168,7 +169,8 @@ void cosmic_gain() {
   gROOT->SetBatch(kTRUE); // Prevent ROOT from opening a GUI window
   string path = "/work/hallc/c-lad/ehingerl/analysis/lad_cosmic/general/histos/";
 
-  ifstream voltage_file("/work/hallc/c-lad/ehingerl/analysis/lad_cosmic/gain/files/" + voltage_file_name);
+  ifstream voltage_file(path + "../../gain/files/" + string(is_laser ? "laser/" : "cosmic/") +
+                        voltage_file_name);
   if (!voltage_file.is_open()) {
     cerr << "Error opening file: " << voltage_file_name << endl;
     return;
@@ -317,7 +319,7 @@ void cosmic_gain() {
                                    voltages_top[N_BARS * plane_idx + bar_num].end()) +
                       50;
         double x_vals[N_POINTS_FIT] = {0};
-        double step = (xmax - xmin) / (N_POINTS_FIT - 1);
+        double step                 = (xmax - xmin) / (N_POINTS_FIT - 1);
         for (int i = 0; i < N_POINTS_FIT; i++) {
           x_vals[i] = xmin + i * step;
         }
@@ -358,9 +360,9 @@ void cosmic_gain() {
     title_top->Draw();
 
     if (use_median)
-      c1->SaveAs(Form("files/peak_amp_top_median_plane_%s.pdf", plane_names[plane_idx].c_str()));
+      c1->SaveAs(Form("files/%s/peak_amp_top_median_plane_%s.pdf", is_laser ? "laser" : "cosmic", plane_names[plane_idx].c_str()));
     else
-      c1->SaveAs(Form("files/peak_amp_top_mode_plane_%s.pdf", plane_names[plane_idx].c_str()));
+      c1->SaveAs(Form("files/%s/peak_amp_top_mode_plane_%s.pdf", is_laser ? "laser" : "cosmic", plane_names[plane_idx].c_str()));
 
     TCanvas *c2 = new TCanvas(Form("c2_plane_%d", plane_idx),
                               Form("Peak Amplitude Bottom Plane %s", plane_names[plane_idx].c_str()), 800, 600);
@@ -437,7 +439,7 @@ void cosmic_gain() {
                                    voltages_btm[N_BARS * plane_idx + bar_num].end()) +
                       50;
         double x_vals[N_POINTS_FIT] = {0};
-        double step = (xmax - xmin) / (N_POINTS_FIT - 1);
+        double step                 = (xmax - xmin) / (N_POINTS_FIT - 1);
         for (int i = 0; i < N_POINTS_FIT; i++) {
           x_vals[i] = xmin + i * step;
         }
@@ -478,9 +480,9 @@ void cosmic_gain() {
     title_btm->Draw();
 
     if (use_median)
-      c2->SaveAs(Form("files/peak_amp_btm_median_plane_%s.pdf", plane_names[plane_idx].c_str()));
-    else
-      c2->SaveAs(Form("files/peak_amp_btm_mode_plane_%s.pdf", plane_names[plane_idx].c_str()));
+      c2->SaveAs(Form("files/%s/peak_amp_btm_median_plane_%s.pdf", is_laser ? "laser" : "cosmic", plane_names[plane_idx].c_str()));
+        else
+      c2->SaveAs(Form("files/%s/peak_amp_btm_mode_plane_%s.pdf", is_laser ? "laser" : "cosmic", plane_names[plane_idx].c_str()));
 
     delete c1;
     delete c2;
@@ -500,7 +502,7 @@ void cosmic_gain() {
 
   cout << "Delete Worked" << endl;
 
-  ofstream csv_file("files/target_voltages_corrections.csv");
+  ofstream csv_file(Form("files/%s/target_voltages_corrections.csv", is_laser ? "laser" : "cosmic"));
   csv_file << "Bar, Voltage\n";
   for (int i = 0; i < N_PLANES; i++) {
     for (int j = 0; j < N_BARS; j++) {
