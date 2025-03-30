@@ -5,7 +5,6 @@
 #include <TH2.h>
 #include <TLegend.h>
 #include <TLine.h>
-#include <TMultiGraph.h>
 #include <TPaveText.h>
 #include <TROOT.h>
 #include <TTree.h>
@@ -17,19 +16,19 @@
 using namespace ROOT;
 using namespace std;
 
-bool is_laser                     = true;
 const static int N_BARS           = 11;
 const static int N_PLANES         = 6;
 const static string plane_names[] = {"000", "001", "100", "101", "200", "REFBAR"};
-const static string sub_dir       = "laser_run2";
+const static string sub_dir       = "cosmic2";
+const static string sub_dir_laser = "laser_run2";
 const static string fit_type      = "exponential"; // "linear" or "exponential"
-
-const static int AMP_MAX_LOWER = 10;
-const static int AMP_MAX_UPPER = 800;
+const static string fit_file_name = "fit_params.txt";
+const static int AMP_MAX_LOWER    = 20;
+const static int AMP_MAX_UPPER    = 900;
 
 const static bool use_median              = true;
 const static double TARGET_ADC            = 230; // was 100 for cosmic
-const static int N_POINTS_FIT             = 100;
+const static int N_POINTS_FIT             = 10;
 const static int MIN_N_ENTRIES_HISTO_MODE = 100;
 const static int FONT_SIZE                = -1;
 
@@ -111,6 +110,7 @@ void getModesPane(TFile *file, int plane_idx, int run_idx, vector<vector<double>
 }
 
 double doLinFit(double *x, double *y, int n, double *xout, double *yout, pair<double, double> &fit_results) {
+  double b      = fit_results.second;
   double sum_x  = 0;
   double sum_y  = 0;
   double sum_x2 = 0;
@@ -121,12 +121,8 @@ double doLinFit(double *x, double *y, int n, double *xout, double *yout, pair<do
     sum_x2 += x[i] * x[i];
     sum_xy += x[i] * y[i];
   }
-  double a = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x);
-  double b = (sum_y - a * sum_x) / n;
-
-  // Store the fit results
-  fit_results.first  = a;
-  fit_results.second = b;
+  double a          = (sum_xy - b * sum_x) / sum_x2;
+  fit_results.first = a;
   // Calculate the fitted values
   for (int i = 0; i < N_POINTS_FIT; i++) {
     yout[i] = a * xout[i] + b;
@@ -140,31 +136,17 @@ double doLinFit(double *x, double *y, int n, double *xout, double *yout, pair<do
 }
 
 double doExpFit(double *x, double *y, int n, double *xout, double *yout, pair<double, double> &fit_results) {
-  double sum_x      = 0;
-  double sum_y      = 0;
-  double sum_x2     = 0;
-  double sum_xy     = 0;
-  double sum_ln_y   = 0;
-  double sum_x_ln_y = 0;
+  double b        = fit_results.second;
+  double sum_ln_y = 0;
 
   for (int i = 0; i < n; i++) {
-    sum_x += x[i];
-    sum_y += y[i];
-    sum_x2 += x[i] * x[i];
-    sum_xy += x[i] * y[i];
-    sum_ln_y += log(y[i]);
-    sum_x_ln_y += x[i] * log(y[i]);
+    sum_ln_y += log(y[i]) - b * x[i];
   }
 
-  double denom = n * sum_x2 - sum_x * sum_x;
-  double a     = (sum_x2 * sum_ln_y - sum_x * sum_x_ln_y) / denom;
-  double b     = (n * sum_x_ln_y - sum_x * sum_ln_y) / denom;
+  double a = sum_ln_y / n;
 
-  a = exp(a);
-
-  // Store the fit results
-  fit_results.first  = a;
-  fit_results.second = b;
+  a                 = exp(a);
+  fit_results.first = a;
   // Calculate the fitted values
   for (int i = 0; i < N_POINTS_FIT; i++) {
     yout[i] = a * exp(b * xout[i]);
@@ -189,24 +171,8 @@ double doFit(double *x, double *y, int n, double *xout, double *yout, pair<doubl
 
   return target;
 }
-void cosmic_gain() {
-  map<string, pair<double, double>> pmt_voltage_limits;
+void set_gain() {
 
-  // Initialize the map with min and max voltage values for each PMT
-  for (int i = 0; i < N_PLANES; i++) {
-    for (int j = 0; j < N_BARS; j++) {
-      string pmt_top = plane_names[i] + to_string(j) + "U";
-      string pmt_btm = plane_names[i] + to_string(j) + "D";
-
-      pmt_voltage_limits[pmt_top] = make_pair(0, 2500);
-      pmt_voltage_limits[pmt_btm] = make_pair(0, 2500);
-    }
-  }
-  // Update the upper PMT voltage limits for specific bars
-  pmt_voltage_limits["2007D"].second = 2100;
-  pmt_voltage_limits["2008D"].second = 2100;
-  pmt_voltage_limits["2003U"].second = 2100;
-  
   gROOT->SetBatch(kTRUE); // Prevent ROOT from opening a GUI window
   string path = "/work/hallc/c-lad/ehingerl/analysis/lad_cosmic/general/histos/";
 
@@ -242,6 +208,52 @@ void cosmic_gain() {
   int paddle_num;
   bool top;
 
+  // Read fit parameters from fit_params.csv
+  ifstream fit_params_file(path + "../../gain/files/" + sub_dir_laser.c_str() + "/fit_params.csv");
+  if (!fit_params_file.is_open()) {
+    cerr << "Error opening file: fit_params.csv" << endl;
+    return;
+  }
+
+  string fit_line;
+  getline(fit_params_file, fit_line); // Skip the header line
+  while (getline(fit_params_file, fit_line)) {
+    stringstream fit_ss(fit_line);
+    string bar_id, a_str, b_str;
+
+    getline(fit_ss, bar_id, ',');
+    getline(fit_ss, a_str, ',');
+    getline(fit_ss, b_str, ',');
+
+    bool is_top = (bar_id.back() == 'U');
+    string plane_id = (bar_id.substr(0, 6) == "REFBAR" ? "999" : bar_id.substr(0, 3)); // Handle REFBAR as plane ID 999
+    string bar_number_str;
+    if (bar_id.substr(0, 6) == "REFBAR") {
+        bar_number_str = bar_id.substr(6, bar_id.size() - 7); // Extract the bar number for REFBAR
+    } else {
+        bar_number_str = bar_id.substr(3, bar_id.size() - 4); // Extract the bar number for other cases
+    }
+    int bar_number = (bar_number_str.empty() ? 0 : stoi(bar_number_str)); // Handle empty bar number for REFBAR
+
+    int paddle_idx = paddle_ID_to_idx(stoi(plane_id) * 100 + bar_number);
+
+    double a = stod(a_str);
+    double b = stod(b_str);
+
+    if (paddle_idx >= 0) {
+      if (is_top) {
+        fit_params[paddle_idx].first = a;
+        fit_params[paddle_idx].second = b;
+      } else {
+        fit_params[paddle_idx].first = a;
+        fit_params[paddle_idx].second = b;
+      }
+    }
+  }
+  fit_params_file.close();
+
+
+  // Read the voltages from the file
   for (int i = 0; i < N_BARS * N_PLANES * 2; ++i) {
 
     getline(voltage_file, line);
@@ -271,8 +283,7 @@ void cosmic_gain() {
     }
   }
 
-  voltage_file.close();
-
+  // Loop over the runs and get the modes
   for (int run_idx = 0; run_idx < n_runs; run_idx++) {
     string run_file = path + "cosmic_histos_wREF_" + to_string(run_numbers[run_idx]) + "_output.root";
     TFile *file     = new TFile(run_file.c_str());
@@ -283,8 +294,7 @@ void cosmic_gain() {
     delete file;
   }
 
-  TCanvas *c3 = new TCanvas("c3", "Fit Parameters", 800, 600);
-  c3->Divide(2, 3); // Divide canvas into 1 column and 2 rows
+
   for (int plane_idx = 0; plane_idx < N_PLANES; plane_idx++) {
     TCanvas *c1 = new TCanvas(Form("c1_plane_%d", plane_idx),
                               Form("Peak Amplitude Top Plane %s", plane_names[plane_idx].c_str()), 800, 600);
@@ -347,9 +357,7 @@ void cosmic_gain() {
       int n_data = 0;
       for (int i = 0; i < n_runs; i++) {
         if (amplitudes_top[N_BARS * plane_idx + bar_num][i] > AMP_MAX_LOWER &&
-        amplitudes_top[N_BARS * plane_idx + bar_num][i] < AMP_MAX_UPPER &&
-        voltages_top[N_BARS * plane_idx + bar_num][i] > pmt_voltage_limits[plane_names[plane_idx] + to_string(bar_num) + "U"].first &&
-        voltages_top[N_BARS * plane_idx + bar_num][i] < pmt_voltage_limits[plane_names[plane_idx] + to_string(bar_num) + "U"].second) {
+            amplitudes_top[N_BARS * plane_idx + bar_num][i] < AMP_MAX_UPPER) {
           x[n_data] = voltages_top[N_BARS * plane_idx + bar_num][i];
           y[n_data] = amplitudes_top[N_BARS * plane_idx + bar_num][i];
           n_data++;
@@ -406,9 +414,11 @@ void cosmic_gain() {
     title_top->Draw();
 
     if (use_median)
-      c1->SaveAs(Form("files/%s/peak_amp_top_median_plane_%s.pdf", sub_dir.c_str(), plane_names[plane_idx].c_str()));
+      c1->SaveAs(Form("files/%s/laser_fitted/peak_amp_top_median_plane_%s.pdf", sub_dir.c_str(),
+                      plane_names[plane_idx].c_str()));
     else
-      c1->SaveAs(Form("files/%s/peak_amp_top_mode_plane_%s.pdf", sub_dir.c_str(), plane_names[plane_idx].c_str()));
+      c1->SaveAs(Form("files/%s/laser_fitted/peak_amp_top_mode_plane_%s.pdf", sub_dir.c_str(),
+                      plane_names[plane_idx].c_str()));
 
     TCanvas *c2 = new TCanvas(Form("c2_plane_%d", plane_idx),
                               Form("Peak Amplitude Bottom Plane %s", plane_names[plane_idx].c_str()), 800, 600);
@@ -469,9 +479,7 @@ void cosmic_gain() {
       int n_data = 0;
       for (int i = 0; i < n_runs; i++) {
         if (amplitudes_btm[N_BARS * plane_idx + bar_num][i] > AMP_MAX_LOWER &&
-        amplitudes_btm[N_BARS * plane_idx + bar_num][i] < AMP_MAX_UPPER &&
-        voltages_btm[N_BARS * plane_idx + bar_num][i] > pmt_voltage_limits[plane_names[plane_idx] + to_string(bar_num) + "D"].first &&
-        voltages_btm[N_BARS * plane_idx + bar_num][i] < pmt_voltage_limits[plane_names[plane_idx] + to_string(bar_num) + "D"].second) {
+            amplitudes_btm[N_BARS * plane_idx + bar_num][i] < AMP_MAX_UPPER) {
           x[n_data] = voltages_btm[N_BARS * plane_idx + bar_num][i];
           y[n_data] = amplitudes_btm[N_BARS * plane_idx + bar_num][i];
           n_data++;
@@ -529,86 +537,11 @@ void cosmic_gain() {
     title_btm->Draw();
 
     if (use_median)
-      c2->SaveAs(Form("files/%s/peak_amp_btm_median_plane_%s.pdf", sub_dir.c_str(), plane_names[plane_idx].c_str()));
+      c2->SaveAs(Form("files/%s/laser_fitted/peak_amp_btm_median_plane_%s.pdf", sub_dir.c_str(),
+                      plane_names[plane_idx].c_str()));
     else
-      c2->SaveAs(Form("files/%s/peak_amp_btm_mode_plane_%s.pdf", sub_dir.c_str(), plane_names[plane_idx].c_str()));
-
-    c3->cd();
-    c3->cd(plane_idx + 1);       // Move to the correct pad for the fit parameters
-    TGraph *fit_param_graphs[2]; // 0 for top, 1 for bottom
-    fit_param_graphs[0] = new TGraph(); // Top PMT
-    fit_param_graphs[1] = new TGraph(); // Bottom PMT
-
-    int point_idx_top = 0;
-    int point_idx_btm = 0;
-
-    for (int bar_num = 0; bar_num < N_BARS; bar_num++) {
-      if (fit_params[N_BARS * plane_idx + bar_num].first != 0) {
-      fit_param_graphs[0]->SetPoint(point_idx_top, bar_num, fit_params[N_BARS * plane_idx + bar_num].first);
-      point_idx_top++;
-      }
-      if (fit_params[N_BARS * plane_idx + bar_num].second != 0) {
-      fit_param_graphs[1]->SetPoint(point_idx_btm, bar_num, fit_params[N_BARS * plane_idx + bar_num].second);
-      point_idx_btm++;
-      }
-    }
-
-    fit_param_graphs[0]->SetMarkerColor(kBlue);
-    fit_param_graphs[0]->SetMarkerStyle(20);
-    fit_param_graphs[0]->SetMarkerSize(1.5);
-    fit_param_graphs[0]->SetLineColor(kBlue);
-    fit_param_graphs[0]->SetLineWidth(2);
-    fit_param_graphs[0]->SetLineStyle(1); // Set line style to solid
-    fit_param_graphs[0]->SetTitle(
-      Form("Fit Parameters Plane %s; Bar Number; Fit Parameter Value", plane_names[plane_idx].c_str()));
-
-    fit_param_graphs[1]->SetMarkerColor(kRed);
-    fit_param_graphs[1]->SetMarkerStyle(20);
-    fit_param_graphs[1]->SetMarkerSize(1.5);
-    fit_param_graphs[1]->SetLineColor(kRed);
-    fit_param_graphs[1]->SetLineWidth(2);
-    fit_param_graphs[1]->SetLineStyle(1); // Set line style to solid
-
-    double min_y = numeric_limits<double>::max();
-    double max_y = numeric_limits<double>::lowest();
-    for (int i = 0; i < fit_param_graphs[0]->GetN(); i++) {
-      double x, y;
-      fit_param_graphs[0]->GetPoint(i, x, y);
-      if (y < min_y) min_y = y;
-      if (y > max_y) max_y = y;
-    }
-    for (int i = 0; i < fit_param_graphs[1]->GetN(); i++) {
-      double x, y;
-      fit_param_graphs[1]->GetPoint(i, x, y);
-      if (y < min_y) min_y = y;
-      if (y > max_y) max_y = y;
-    }
-
-    fit_param_graphs[0]->GetXaxis()->SetLimits(0, N_BARS - 1);
-    fit_param_graphs[0]->GetYaxis()->SetRangeUser(min_y, max_y);
-
-    fit_param_graphs[0]->Draw("AP");
-    fit_param_graphs[1]->Draw("P SAME");
-
-    TLegend *legend_fit_params = new TLegend(0.1, 0.8, 0.3, 0.9); // Create a legend
-    legend_fit_params->SetHeader("Legend", "C");                  // Set legend header
-    legend_fit_params->AddEntry(fit_param_graphs[0], "Fit Parameter Top", "P");
-    legend_fit_params->AddEntry(fit_param_graphs[1], "Fit Parameter Bottom", "P");
-    legend_fit_params->Draw();
-
-    // TPaveText *title_fit_params = new TPaveText(0.3, 0.95, 0.7, 1, "brNDC");
-    // title_fit_params->AddText(Form("Fit Parameters Plane %s", plane_names[plane_idx].c_str()));
-    // title_fit_params->SetFillStyle(0);   // Remove the fill
-    // title_fit_params->SetBorderSize(0);  // Remove the border
-    // title_fit_params->SetShadowColor(0); // Remove the shadow
-    // title_fit_params->SetTextAlign(22);  // Center align the text
-    // title_fit_params->SetTextSize(0.04); // Adjust text size to make it more prominent
-    // title_fit_params->Draw();
-
-    c3->Update();
-
-    // delete fit_param_graphs[0];
-    // delete fit_param_graphs[1];
+      c2->SaveAs(Form("files/%s/laser_fitted/peak_amp_btm_mode_plane_%s.pdf", sub_dir.c_str(),
+                      plane_names[plane_idx].c_str()));
 
     delete c1;
     delete c2;
@@ -626,22 +559,9 @@ void cosmic_gain() {
     delete legend_btm;
   }
 
-  c3->cd();
-  // TPaveText *title_fit_params = new TPaveText(0.3, 0.95, 0.7, 1, "brNDC");
-  // title_fit_params->AddText("Fit Parameters");
-  // title_fit_params->SetFillStyle(0);   // Remove the fill
-  // title_fit_params->SetBorderSize(0);  // Remove the border
-  // title_fit_params->SetShadowColor(0); // Remove the shadow
-  // title_fit_params->SetTextAlign(22);  // Center align the text
-  // title_fit_params->SetTextSize(0.04); // Adjust text size to make it more prominent
-  // title_fit_params->Draw();
-  c3->SaveAs(Form("files/%s/fit_params.pdf", sub_dir.c_str()));
-  delete c3;
-  // delete title_fit_params;
-
   cout << "Delete Worked" << endl;
 
-  ofstream csv_file(Form("files/%s/target_voltages_corrections.csv", sub_dir.c_str()));
+  ofstream csv_file(Form("files/%s/laser_fitted/target_voltages_corrections.csv", sub_dir.c_str()));
   csv_file << "Bar, Voltage\n";
   for (int i = 0; i < N_PLANES; i++) {
     for (int j = 0; j < N_BARS; j++) {
@@ -656,12 +576,12 @@ void cosmic_gain() {
   ofstream fit_file(Form("files/%s/fit_params.csv", sub_dir.c_str()));
   fit_file << "Bar, a, b\n";
 
-  for (int i = 0; i < N_PLANES; i++) {
-    for (int j = 0; j < N_BARS; j++) {
-      fit_file << plane_names[i] << setw(2) << setfill('0') << j << "U, " << fit_params[N_BARS * i + j].first << ", "
-               << fit_params[N_BARS * i + j].second << "\n";
-      fit_file << plane_names[i] << setw(2) << setfill('0') << j << "D, " << fit_params[N_BARS * i + j].first << ", "
-               << fit_params[N_BARS * i + j].second << "\n";
-    }
-  }
+  // for (int i = 0; i < N_PLANES; i++) {
+  //   for (int j = 0; j < N_BARS; j++) {
+  //     fit_file << plane_names[i] << setw(2) << setfill('0') << j << "U, " << fit_params[N_BARS * i + j].first << ", "
+  //              << fit_params[N_BARS * i + j].second << "\n";
+  //     fit_file << plane_names[i] << setw(2) << setfill('0') << j << "D, " << fit_params[N_BARS * i + j].first << ", "
+  //              << fit_params[N_BARS * i + j].second << "\n";
+  //   }
+  // }
 }

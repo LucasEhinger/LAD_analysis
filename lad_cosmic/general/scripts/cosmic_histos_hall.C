@@ -11,10 +11,11 @@ using namespace std;
 
 const int NUM_BARS         = 11;
 const int N_DATA_MAX       = 100;
-const int NUM_PLANES       = 5;
-const string plane_names[] = {"000", "001", "100", "101", "200"};
+const int NUM_PLANES       = 6;
+const string plane_names[] = {"000", "001", "100", "101", "200", "REFBAR"};
 // const int NUM_PLANES       = 1;
 // const string plane_names[] = {"200"};
+bool is_laser          = true;
 string hodo_name       = "L.ladhod"; //"L.hod";
 int n_ajacent_required = 3;
 
@@ -54,6 +55,8 @@ static const Double_t adcChanTopC     = (adcDynamicRange / 1000 / nAdcChan) * (a
 // (1000 mV / 4096 adc channels) * (4 ns time sample / 50 ohms input resistance) = ~0.020 pc/channel
 
 bool isGoodHit(int plane_idx, int paddle_indx, int btm_mult[NUM_PLANES][NUM_BARS], int top_mult[NUM_PLANES][NUM_BARS]) {
+  if (is_laser)
+    return true;
   if (btm_mult[plane_idx][paddle_indx] == 0 || top_mult[plane_idx][paddle_indx] == 0) {
     return false;
   }
@@ -91,7 +94,8 @@ void cosmic_histos_hall(int run_number) {
 
   // Open the input file
   string input_string =
-      "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_wREF_cosmic_hall_" + to_string(run_number) + "_-1.root";
+      "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_wGEM_cosmic_hall_" + to_string(run_number) + "_-1.root";
+  // "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_wREF_cosmic_hall_" + to_string(run_number) + "_-1.root";
 
   // "/volatile/hallc/c-lad/ehingerl/ROOTfiles/COSMICS/LAD_cosmic_hall_" + to_string(run_number) + "_-1.root";
   TFile *inputFile = TFile::Open(input_string.c_str(), "READ");
@@ -577,7 +581,7 @@ void cosmic_histos_hall(int run_number) {
       // if (num_fired_pmts == 16 && !plottedWaveform) {
       // if (i_evt < 20) {
       // BAR 000102D
-      if (!plottedWaveform[plane_idx]) {
+      if (false && !plottedWaveform[plane_idx]) {
         plottedWaveform[plane_idx] = true;
         indivEventWaveform->cd();
         int indx = 0;
@@ -589,9 +593,9 @@ void cosmic_histos_hall(int run_number) {
           for (int i = 0; i < n_samples; i++) {
             h1_btm_waveform.Fill(i * adcTimeSample, Btm_ADC_Waveform[plane_idx][indx + i] * adcChanTomV);
           }
-          // if(btm_paddle_indx != 2 && plane_idx != 1){
-          //   continue;
-          // }
+          if (btm_paddle_indx != 2 && plane_idx != 1) {
+            continue;
+          }
           h1_btm_waveform.Write();
           indx += n_samples;
         }
