@@ -53,7 +53,7 @@ int paddle_ID_to_idx(int paddle_idx) {
     return -1;
   }
 }
-void getModesPane(TFile *file, int plane_idx, int run_idx, vector<vector<double>> &amplitudes_btm,
+void getPeakPlane(TFile *file, int plane_idx, int run_idx, vector<vector<double>> &amplitudes_btm,
                   vector<vector<double>> &amplitudes_top) {
 
   TDirectory *subdir1 = file->GetDirectory("Pulse_Amp");
@@ -277,7 +277,7 @@ void cosmic_gain() {
     string run_file = path + "cosmic_histos_wREF_" + to_string(run_numbers[run_idx]) + "_output.root";
     TFile *file     = new TFile(run_file.c_str());
     for (int plane_idx = 0; plane_idx < N_PLANES; plane_idx++) {
-      getModesPane(file, plane_idx, run_idx, amplitudes_btm, amplitudes_top);
+      getPeakPlane(file, plane_idx, run_idx, amplitudes_btm, amplitudes_top);
     }
     file->Close();
     delete file;
