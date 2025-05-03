@@ -14,21 +14,24 @@ const std::string plane_names[] = {"000", "001", "100", "101", "200", "REFBAR"};
 
 const int MAX_N_TRACKS                = 10;
 const int MAX_N_GOODHITS              = 40;
-const static int MAX_TOTAL_HITS       = 5000;
+const static int MAX_TOTAL_HITS       = 3;
 const static int MAX_N_HITS_PER_PLANE = 2;
 
-const int NBINS    = 100;
+const int NBINS    = 200;
 const double N_MIN = -500;
 const double N_MAX = 500;
 
 const static int NBINS_T_DIFF  = 100;
 const static double T_DIFF_MIN = -50;
 const static double T_DIFF_MAX = 50;
-void get_good_evts() {
-  const char *inputFileName =
-      "/u/home/ehingerl/hallc/software/lad_replay/ROOTfiles/COSMICS/LAD_wGEM_cosmic_hall_296_-1.root";
-  const char *outputFileName =
-      "/u/home/ehingerl/hallc/software/lad_replay/ROOTfiles/COSMICS/LAD_wGEM_cosmic_hall_296_-1_filtered.root";
+void get_good_evts(int settingNumber) {
+  // int settingNumber = 9; // Replace this with the desired setting number
+  const char *inputFileName = Form(
+      "/u/home/ehingerl/hallc/software/lad_replay/ROOTfiles/COSMICS/LAD_wGEM_cosmic_hall_296_-1_setting%d.root",
+      settingNumber);
+  const char *outputFileName = Form(
+      "/u/home/ehingerl/hallc/software/lad_replay/ROOTfiles/COSMICS/LAD_wGEM_cosmic_hall_296_-1_setting%d_filtered.root",
+      settingNumber);
 
   // Open the input ROOT file
   TFile *inputFile = TFile::Open(inputFileName, "READ");
@@ -124,14 +127,18 @@ void get_good_evts() {
       new TH1D("hist_min_delta_pos_trans", "Min Delta Pos Trans;Value;Entries", NBINS, N_MIN, N_MAX);
   TH1D *hist_delta_pos_long_vs_plane[NUM_PLANES];
   TH1D *hist_delta_pos_trans_vs_plane[NUM_PLANES];
+  TH1D *hist_delta_pos_trans_vs_plane_unique[NUM_PLANES];
 
   for (int plane = 0; plane < NUM_PLANES; ++plane) {
-    hist_delta_pos_long_vs_plane[plane] = new TH1D(
-        Form("hist_delta_pos_long_vs_plane_%d", plane),
-        Form("Delta Pos Long for Plane %d;Delta Pos Long;Entries", plane), NBINS, N_MIN, N_MAX);
-    hist_delta_pos_trans_vs_plane[plane] = new TH1D(
-        Form("hist_delta_pos_trans_vs_plane_%d", plane),
-        Form("Delta Pos Trans for Plane %d;Delta Pos Trans;Entries", plane), NBINS, N_MIN, N_MAX);
+    hist_delta_pos_long_vs_plane[plane] =
+        new TH1D(Form("hist_delta_pos_long_vs_plane_%d", plane),
+                 Form("Delta Pos Long for Plane %d;Delta Pos Long;Entries", plane), NBINS, N_MIN, N_MAX);
+    hist_delta_pos_trans_vs_plane[plane] =
+        new TH1D(Form("hist_delta_pos_trans_vs_plane_%d", plane),
+                 Form("Delta Pos Trans for Plane %d;Delta Pos Trans;Entries", plane), NBINS, N_MIN, N_MAX);
+    hist_delta_pos_trans_vs_plane_unique[plane] =
+        new TH1D(Form("hist_delta_pos_trans_vs_plane_unique_%d", plane),
+                 Form("Delta Pos Trans for Unique Plane %d;Delta Pos Trans;Entries", plane), NBINS, N_MIN, N_MAX);
   }
 
   TH1D *hist_time_diff_refbar_200 =
@@ -145,15 +152,19 @@ void get_good_evts() {
                T_DIFF_MIN, T_DIFF_MAX);
   TH1D *hist_delta_pos_long_vs_bar[NUM_PLANES][NUM_BARS];
   TH1D *hist_delta_pos_trans_vs_bar[NUM_PLANES][NUM_BARS];
+  TH1D *hist_delta_pos_trans_vs_bar_unique[NUM_PLANES][NUM_BARS];
 
   for (int plane = 0; plane < NUM_PLANES; ++plane) {
     for (int bar = 0; bar < NUM_BARS; ++bar) {
-      hist_delta_pos_long_vs_bar[plane][bar] = new TH1D(
-          Form("hist_delta_pos_long_vs_bar_plane_%d_bar_%d", plane, bar),
-          Form("Delta Pos Long for Plane %d Bar %d;Delta Pos Long;Entries", plane, bar), NBINS, N_MIN, N_MAX);
+      hist_delta_pos_long_vs_bar[plane][bar] =
+          new TH1D(Form("hist_delta_pos_long_vs_bar_plane_%d_bar_%d", plane, bar),
+                   Form("Delta Pos Long for Plane %d Bar %d;Delta Pos Long;Entries", plane, bar), NBINS, N_MIN, N_MAX);
       hist_delta_pos_trans_vs_bar[plane][bar] = new TH1D(
           Form("hist_delta_pos_trans_vs_bar_plane_%d_bar_%d", plane, bar),
           Form("Delta Pos Trans for Plane %d Bar %d;Delta Pos Trans;Entries", plane, bar), NBINS, N_MIN, N_MAX);
+      hist_delta_pos_trans_vs_bar_unique[plane][bar] = new TH1D(
+          Form("hist_delta_pos_trans_vs_bar_unique_plane_%d_bar_%d", plane, bar),
+          Form("Delta Pos Trans for Unique Plane %d Bar %d;Delta Pos Trans;Entries", plane, bar), NBINS, N_MIN, N_MAX);
     }
   }
 
@@ -224,7 +235,8 @@ void get_good_evts() {
 
     // Fill histograms for all "good" entries
     bool goodEvent = true;
-    if (nTracks > MAX_N_TRACKS || L_ladhod_goodhit_n > MAX_N_GOODHITS || (refbar_hits + plane_100_hits + plane_101_hits + plane_200_hits) > MAX_TOTAL_HITS) {
+    if (nTracks > MAX_N_TRACKS || L_ladhod_goodhit_n > MAX_N_GOODHITS ||
+        (refbar_hits + plane_100_hits + plane_101_hits + plane_200_hits) > MAX_TOTAL_HITS) {
       goodEvent = false;
     }
     if (nTracks == 0) {
@@ -238,35 +250,53 @@ void get_good_evts() {
         hist_delta_pos_trans->Fill(L_ladhod_goodhit_delta_pos_trans[j]);
         hist_delta_pos_long_vs_plane[int(L_ladhod_goodhit_plane[j])]->Fill(L_ladhod_goodhit_delta_pos_long[j]);
         hist_delta_pos_trans_vs_plane[int(L_ladhod_goodhit_plane[j])]->Fill(L_ladhod_goodhit_delta_pos_trans[j]);
-        hist_delta_pos_long_vs_bar[int(L_ladhod_goodhit_plane[j])][int(L_ladhod_goodhit_paddle[j])]->Fill(L_ladhod_goodhit_delta_pos_long[j]);
-        hist_delta_pos_trans_vs_bar[int(L_ladhod_goodhit_plane[j])][int(L_ladhod_goodhit_paddle[j])]->Fill(L_ladhod_goodhit_delta_pos_trans[j]);
+        hist_delta_pos_long_vs_bar[int(L_ladhod_goodhit_plane[j])][int(L_ladhod_goodhit_paddle[j])]->Fill(
+            L_ladhod_goodhit_delta_pos_long[j]);
+        hist_delta_pos_trans_vs_bar[int(L_ladhod_goodhit_plane[j])][int(L_ladhod_goodhit_paddle[j])]->Fill(
+            L_ladhod_goodhit_delta_pos_trans[j]);
       }
 
-      // Find and fill histograms for minimum entries
+      // Find and fill histograms for minimum entries per paddle
       if (L_ladhod_goodhit_n > 0) {
-        Double_t min_delta_pos_long = *std::min_element(
-            L_ladhod_goodhit_delta_pos_long, L_ladhod_goodhit_delta_pos_long + int(L_ladhod_goodhit_n),
-            [](Double_t a, Double_t b) { return std::abs(a) < std::abs(b); });
-        Double_t min_delta_pos_trans = *std::min_element(
-            L_ladhod_goodhit_delta_pos_trans, L_ladhod_goodhit_delta_pos_trans + int(L_ladhod_goodhit_n),
-            [](Double_t a, Double_t b) { return std::abs(a) < std::abs(b); });
-        hist_min_delta_pos_long->Fill(min_delta_pos_long);
-        hist_min_delta_pos_trans->Fill(min_delta_pos_trans);
-      }
+        std::map<int, Double_t> minDeltaPosTransPerPaddle;
 
+        for (int j = 0; j < L_ladhod_goodhit_n; ++j) {
+          int plane     = int(L_ladhod_goodhit_plane[j]);
+          int paddle    = int(L_ladhod_goodhit_paddle[j]);
+          int uniqueKey = plane * 100 + paddle; // Combine plane and paddle into a unique key
+
+          // Update the minimum delta_pos_trans for this paddle
+          if (minDeltaPosTransPerPaddle.find(uniqueKey) == minDeltaPosTransPerPaddle.end() ||
+              std::abs(L_ladhod_goodhit_delta_pos_trans[j]) < std::abs(minDeltaPosTransPerPaddle[uniqueKey])) {
+            minDeltaPosTransPerPaddle[uniqueKey] = L_ladhod_goodhit_delta_pos_trans[j];
+          }
+
+          // // Fill unique hits into hist_delta_pos_trans_vs_bar_unique
+          // if (plane < NUM_PLANES && paddle < NUM_BARS) {
+          //   hist_delta_pos_trans_vs_bar_unique[plane][paddle]->Fill(L_ladhod_goodhit_delta_pos_trans[j]);
+          // }
+        }
+
+        // Fill histograms with the minimum delta_pos_trans for each paddle
+        for (const auto &entry : minDeltaPosTransPerPaddle) {
+          hist_min_delta_pos_trans->Fill(entry.second);
+          hist_delta_pos_trans_vs_plane_unique[int(entry.first / 100)]->Fill(entry.second);
+          hist_delta_pos_trans_vs_bar_unique[entry.first / 100][entry.first % 100]->Fill(entry.second);
+        }
+      }
       // Map for unique hit multiplicity
       std::map<int, int> uniqueHitMultiplicity;
       for (int j = 0; j < L_ladhod_goodhit_n; ++j) {
-        int plane = int(L_ladhod_goodhit_plane[j]);
-        int paddle = int(L_ladhod_goodhit_paddle[j]);
+        int plane     = int(L_ladhod_goodhit_plane[j]);
+        int paddle    = int(L_ladhod_goodhit_paddle[j]);
         int uniqueKey = plane * 100 + paddle; // Combine plane and paddle into a unique key
         uniqueHitMultiplicity[uniqueKey]++;
       }
 
-      // Print or process the unique hit multiplicity if needed
-      for (const auto &entry : uniqueHitMultiplicity) {
-        printf("Plane %d has %d unique hits\n", entry.first, entry.second);
-      }
+      // // Print or process the unique hit multiplicity if needed
+      // for (const auto &entry : uniqueHitMultiplicity) {
+      //   printf("Plane %d has %d unique hits\n", entry.first, entry.second);
+      // }
       outputTree->Fill();
     }
   }
@@ -284,6 +314,7 @@ void get_good_evts() {
   outputFile->cd("per_plane");
   outputFile->mkdir("per_plane/long");
   outputFile->mkdir("per_plane/trans");
+  outputFile->mkdir("per_plane/trans_unique");
 
   for (int plane = 0; plane < NUM_PLANES; ++plane) {
     if (hist_delta_pos_long_vs_plane[plane]->GetEntries() > 0) {
@@ -294,11 +325,16 @@ void get_good_evts() {
       outputFile->cd("per_plane/trans");
       hist_delta_pos_trans_vs_plane[plane]->Write();
     }
+    if (hist_delta_pos_trans_vs_plane_unique[plane]->GetEntries() > 0) {
+      outputFile->cd("per_plane/trans_unique");
+      hist_delta_pos_trans_vs_plane_unique[plane]->Write();
+    }
   }
   outputFile->mkdir("per_paddle");
   outputFile->cd("per_paddle");
   outputFile->mkdir("per_paddle/long");
   outputFile->mkdir("per_paddle/trans");
+  outputFile->mkdir("per_paddle/trans_unique");
 
   for (int plane = 0; plane < NUM_PLANES; ++plane) {
     for (int bar = 0; bar < NUM_BARS; ++bar) {
@@ -309,6 +345,10 @@ void get_good_evts() {
       if (hist_delta_pos_trans_vs_bar[plane][bar]->GetEntries() > 0) {
         outputFile->cd("per_paddle/trans");
         hist_delta_pos_trans_vs_bar[plane][bar]->Write();
+      }
+      if (hist_delta_pos_trans_vs_bar_unique[plane][bar]->GetEntries() > 0) {
+        outputFile->cd("per_paddle/trans_unique");
+        hist_delta_pos_trans_vs_bar_unique[plane][bar]->Write();
       }
     }
   }
