@@ -21,14 +21,14 @@ bool is_laser                     = true;
 const static int N_BARS           = 11;
 const static int N_PLANES         = 6;
 const static string plane_names[] = {"000", "001", "100", "101", "200", "REFBAR"};
-const static string sub_dir       = "laser_run2";
+const static string sub_dir       = "cosmic2"; // laser_run2
 const static string fit_type      = "exponential"; // "linear" or "exponential"
 
 const static int AMP_MAX_LOWER = 10;
 const static int AMP_MAX_UPPER = 800;
 
 const static bool use_median              = true;
-const static double TARGET_ADC            = 230; // was 100 for cosmic
+const static double TARGET_ADC            = 600; // was 100 for cosmic
 const static int N_POINTS_FIT             = 100;
 const static int MIN_N_ENTRIES_HISTO_MODE = 100;
 const static int FONT_SIZE                = -1;
