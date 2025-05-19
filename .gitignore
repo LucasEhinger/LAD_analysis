@@ -1,4 +1,8 @@
 *.root
 2
 *.so
+*.d
 *.pcm
+*.pdf
+*.csv
+*.sav
