@@ -3,6 +3,7 @@
 #include <TH1F.h>
 #include <TH2.h>
 #include <TLegend.h>
+#include <TLine.h>
 #include <TROOT.h>
 #include <TTree.h>
 #include <iostream>
@@ -12,7 +13,7 @@ const int MAX_DATA        = 10000;
 const int d0_NBINS        = 100;
 const double d0_MIN       = 0.0;
 const double d0_MAX       = 100.0;
-const int projz_NBINS     = 100;
+const int projz_NBINS     = 50;
 const double projz_MIN    = -20.0;
 const double projz_MAX    = 20.0;
 const int projy_NBINS     = 100;
@@ -56,14 +57,16 @@ const double delta_pos_long_sig  = 80.0;
 
 const int maxTracks = 30;
 
-void gem_diagnostic_plots() {
+void gem_diagnostic_plots(int runnum = 0) {
   // Set batch mode to suppress graphical output
   gROOT->SetBatch(kTRUE);
   // Open the ROOT file
-  TString fileName       = "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/"
-                          //  "LAD_COIN_22073_-1.root";
-                           "LAD_COIN_22282_300005.root";
-  TString outputFileName = "gem_diagnostic_plots_22282_300005.root";
+  TString fileName = Form("/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/"
+                          "LAD_COIN_%d_0_0_-1.root",
+                          runnum);
+  //  "LAD_COIN_22073_-1.root";
+  //  "LAD_COIN_22282_0_0_500002.root";
+  TString outputFileName = Form("gem_diagnostic_plots_%d_-1.root", runnum);
   // Open the ROOT file
   TFile *file = TFile::Open(fileName);
   if (!file || file->IsZombie()) {
@@ -83,6 +86,7 @@ void gem_diagnostic_plots() {
   Double_t trk_d0[MAX_DATA];
   Double_t trk_d0_good[MAX_DATA];
   Double_t trk_projz[MAX_DATA], trk_projy[MAX_DATA];
+  Double_t trk_time[MAX_DATA], trk_dt[MAX_DATA];
   Double_t kin_trackID_0[MAX_DATA], kin_trackID_1[MAX_DATA];
   Double_t kin_plane_0[MAX_DATA], kin_plane_1[MAX_DATA];
   Double_t kin_paddle_0[MAX_DATA], kin_paddle_1[MAX_DATA];
@@ -93,31 +97,37 @@ void gem_diagnostic_plots() {
   Double_t kin_deltapostrans_0[MAX_DATA], kin_deltapostrans_1[MAX_DATA];
   Double_t kin_deltaposlong_0[MAX_DATA], kin_deltaposlong_1[MAX_DATA];
   Int_t nTracks, nGoodHits;
+  Double_t reactz;
 
-  T->SetBranchAddress("Ndata.H.gem.trk.d0", &nTracks);
-  T->SetBranchAddress("Ndata.H.ladkin.goodhit_trackid_0", &nGoodHits);
-  T->SetBranchAddress("H.gem.trk.d0", &trk_d0);
-  T->SetBranchAddress("H.gem.trk.d0_good", &trk_d0_good);
-  T->SetBranchAddress("H.gem.trk.projz", &trk_projz);
-  T->SetBranchAddress("H.gem.trk.projy", &trk_projy);
-  T->SetBranchAddress("H.ladkin.goodhit_trackid_0", &kin_trackID_0);
-  T->SetBranchAddress("H.ladkin.goodhit_trackid_1", &kin_trackID_1);
-  T->SetBranchAddress("H.ladkin.goodhit_plane_0", &kin_plane_0);
-  T->SetBranchAddress("H.ladkin.goodhit_plane_1", &kin_plane_1);
-  T->SetBranchAddress("H.ladkin.goodhit_paddle_0", &kin_paddle_0);
-  T->SetBranchAddress("H.ladkin.goodhit_paddle_1", &kin_paddle_1);
-  T->SetBranchAddress("H.ladkin.goodhit_hittime_0", &kin_hittime_0);
-  T->SetBranchAddress("H.ladkin.goodhit_hittime_1", &kin_hittime_1);
-  T->SetBranchAddress("H.ladkin.goodhit_hittheta_0", &kin_hittheta_0);
-  T->SetBranchAddress("H.ladkin.goodhit_hittheta_1", &kin_hittheta_1);
-  T->SetBranchAddress("H.ladkin.goodhit_hitphi_0", &kin_hitphi_0);
-  T->SetBranchAddress("H.ladkin.goodhit_hitphi_1", &kin_hitphi_1);
-  T->SetBranchAddress("H.ladkin.goodhit_hitedep_0", &kin_hitedep_0);
-  T->SetBranchAddress("H.ladkin.goodhit_hitedep_1", &kin_hitedep_1);
-  T->SetBranchAddress("H.ladkin.goodhit_deltapostrans_0", &kin_deltapostrans_0);
-  T->SetBranchAddress("H.ladkin.goodhit_deltapostrans_1", &kin_deltapostrans_1);
-  T->SetBranchAddress("H.ladkin.goodhit_deltaposlong_0", &kin_deltaposlong_0);
-  T->SetBranchAddress("H.ladkin.goodhit_deltaposlong_1", &kin_deltaposlong_1);
+  char spec_prefix = 'P'; // Define the character variable for the prefix
+
+  T->SetBranchAddress(Form("Ndata.%c.gem.trk.d0", spec_prefix), &nTracks);
+  T->SetBranchAddress(Form("Ndata.%c.ladkin.goodhit_trackid_0", spec_prefix), &nGoodHits);
+  T->SetBranchAddress(Form("%c.gem.trk.d0", spec_prefix), &trk_d0);
+  T->SetBranchAddress(Form("%c.gem.trk.d0_good", spec_prefix), &trk_d0_good);
+  T->SetBranchAddress(Form("%c.gem.trk.projz", spec_prefix), &trk_projz);
+  T->SetBranchAddress(Form("%c.gem.trk.projy", spec_prefix), &trk_projy);
+  T->SetBranchAddress(Form("%c.gem.trk.t", spec_prefix), &trk_time);
+  T->SetBranchAddress(Form("%c.gem.trk.dt", spec_prefix), &trk_dt);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_trackid_0", spec_prefix), &kin_trackID_0);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_trackid_1", spec_prefix), &kin_trackID_1);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_plane_0", spec_prefix), &kin_plane_0);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_plane_1", spec_prefix), &kin_plane_1);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_paddle_0", spec_prefix), &kin_paddle_0);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_paddle_1", spec_prefix), &kin_paddle_1);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_hittime_0", spec_prefix), &kin_hittime_0);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_hittime_1", spec_prefix), &kin_hittime_1);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_hittheta_0", spec_prefix), &kin_hittheta_0);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_hittheta_1", spec_prefix), &kin_hittheta_1);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_hitphi_0", spec_prefix), &kin_hitphi_0);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_hitphi_1", spec_prefix), &kin_hitphi_1);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_hitedep_0", spec_prefix), &kin_hitedep_0);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_hitedep_1", spec_prefix), &kin_hitedep_1);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_dTrkHoriz_0", spec_prefix), &kin_deltapostrans_0);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_dTrkHoriz_1", spec_prefix), &kin_deltapostrans_1);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_dTrkVert_0", spec_prefix), &kin_deltaposlong_0);
+  T->SetBranchAddress(Form("%c.ladkin.goodhit_dTrkVert_1", spec_prefix), &kin_deltaposlong_1);
+  T->SetBranchAddress(Form("%c.react.z", spec_prefix), &reactz);
 
   // Create a histogram to store the data
   TH1F *h_d0_all =
@@ -295,36 +305,57 @@ void gem_diagnostic_plots() {
   }
 
   // Create histograms for box cut
-  TH1F *h_d0_all_box_cut =
-      new TH1F("h_d0_all_box_cut", "d0 All Box Cut Distribution;d0: #Delta track proj to target (cm);Counts", d0_NBINS,
-               d0_MIN, d0_MAX);
-  TH1F *h_d0_good_box_cut =
-      new TH1F("h_d0_good_box_cut", "d0 Good Box Cut Distribution;d0: #Delta track proj to target (cm);Counts",
-               d0_NBINS, d0_MIN, d0_MAX);
-  TH1F *h_d0_bad_box_cut =
-      new TH1F("h_d0_bad_box_cut", "d0 Bad Box Cut Distribution;d0: #Delta track proj to target (cm);Counts", d0_NBINS,
-               d0_MIN, d0_MAX);
+  TH1F *h_d0_all_box_cut  = new TH1F("h_d0_all_box_cut", "d0 All Box Cut;d0: #Delta track proj to target (cm);Counts",
+                                     d0_NBINS, d0_MIN, d0_MAX);
+  TH1F *h_d0_good_box_cut = new TH1F("h_d0_good_box_cut", "d0 Good Box Cut;d0: #Delta track proj to target (cm);Counts",
+                                     d0_NBINS, d0_MIN, d0_MAX);
+  TH1F *h_d0_bad_box_cut  = new TH1F("h_d0_bad_box_cut", "d0 Bad Box Cut;d0: #Delta track proj to target (cm);Counts",
+                                     d0_NBINS, d0_MIN, d0_MAX);
   TH1F *h_projz_all_box_cut =
-      new TH1F("h_projz_all_box_cut", "projz All Box Cut Distribution;projz: track proj to z-axis (cm);Counts",
-               projz_NBINS, projz_MIN, projz_MAX);
+      new TH1F("h_projz_all_box_cut", "projz All Box Cut;projz: track proj to z-axis (cm);Counts", projz_NBINS,
+               projz_MIN, projz_MAX);
   TH1F *h_projz_good_box_cut =
-      new TH1F("h_projz_good_box_cut", "projz Good Box Cut Distribution;projz: track proj to z-axis (cm);Counts",
-               projz_NBINS, projz_MIN, projz_MAX);
+      new TH1F("h_projz_good_box_cut", "projz Good Box Cut;projz: track proj to z-axis (cm);Counts", projz_NBINS,
+               projz_MIN, projz_MAX);
   TH1F *h_projz_bad_box_cut =
-      new TH1F("h_projz_bad_box_cut", "projz Bad Box Cut Distribution;projz: track proj to z-axis (cm);Counts",
-               projz_NBINS, projz_MIN, projz_MAX);
+      new TH1F("h_projz_bad_box_cut", "projz Bad Box Cut;projz: track proj to z-axis (cm);Counts", projz_NBINS,
+               projz_MIN, projz_MAX);
   TH1F *h_projy_all_box_cut =
-      new TH1F("h_projy_all_box_cut", "projy All Box Cut Distribution;projy: track proj to y-axis (cm);Counts",
-               projy_NBINS, projy_MIN, projy_MAX);
+      new TH1F("h_projy_all_box_cut", "projy All Box Cut;projy: track proj to y-axis (cm);Counts", projy_NBINS,
+               projy_MIN, projy_MAX);
   TH1F *h_projy_good_box_cut =
-      new TH1F("h_projy_good_box_cut", "projy Good Box Cut Distribution;projy: track proj to y-axis (cm);Counts",
-               projy_NBINS, projy_MIN, projy_MAX);
+      new TH1F("h_projy_good_box_cut", "projy Good Box Cut;projy: track proj to y-axis (cm);Counts", projy_NBINS,
+               projy_MIN, projy_MAX);
   TH1F *h_projy_bad_box_cut =
-      new TH1F("h_projy_bad_box_cut", "projy Bad Box Cut Distribution;projy: track proj to y-axis (cm);Counts",
-               projy_NBINS, projy_MIN, projy_MAX);
+      new TH1F("h_projy_bad_box_cut", "projy Bad Box Cut;projy: track proj to y-axis (cm);Counts", projy_NBINS,
+               projy_MIN, projy_MAX);
 
-  TH1F *h_hittime_box_cut = new TH1F("h_hittime_box_cut", "Hit Time Box Cut Distribution;Hit Time (ns);Counts",
-                                     time_NBINS, time_MIN, time_MAX);
+  TH1F *h_hittime_box_cut =
+      new TH1F("h_hittime_box_cut", "Hit Time Box Cut;Hit Time (ns);Counts", time_NBINS, time_MIN, time_MAX);
+
+  TH2D *h_projz_vs_reactz_sig =
+      new TH2D("h_projz_vs_reactz_sig",
+               "Projz vs reactz;projz: GEM track proj to z-axis (cm) sig;Electron z: track proj to z-axis (cm)",
+               projz_NBINS, projz_MIN, projz_MAX, projz_NBINS, projz_MIN, projz_MAX);
+  TH2D *h_projz_vs_reactz_bdk =
+      new TH2D("h_projz_vs_reactz_bdk",
+               "Projz vs reactz;projz: GEM track proj to z-axis (cm) bdk;Electron z: track proj to z-axis (cm)",
+               projz_NBINS, projz_MIN, projz_MAX, projz_NBINS, projz_MIN, projz_MAX);
+  // Create histograms for box cut track dt
+  TH1F *h_gem_dt_all_box_cut =
+      new TH1F("h_dt_all_box_cut", "Track dt All Box Cut;Track dt (ns);Counts", time_NBINS, -50, 50);
+  TH1F *h_gem_dt_good_box_cut =
+      new TH1F("h_dt_good_box_cut", "Track dt Good Box Cut;Track dt (ns);Counts", time_NBINS, -50, 50);
+  TH1F *h_gem_dt_bad_box_cut =
+      new TH1F("h_dt_bad_box_cut", "Track dt Bad Box Cut;Track dt (ns);Counts", time_NBINS, -50, 50);
+
+  // Create time histograms for the box cut
+  TH1F *h_gem_time_all_box_cut =
+      new TH1F("h_time_all_box_cut", "Time All Box Cut;Time (ns);Counts", time_NBINS, 0, 150);
+  TH1F *h_gem_time_good_box_cut =
+      new TH1F("h_time_good_box_cut", "Time Good Box Cut;Time (ns);Counts", time_NBINS, 0, 150);
+  TH1F *h_gem_time_bad_box_cut =
+      new TH1F("h_time_bad_box_cut", "Time Bad Box Cut;Time (ns);Counts", time_NBINS, 0, 150);
 
   // Create histograms for final cuts
   TH1F *h_zprojection = new TH1F("h_zprojection", "Z Projection Distribution;Z Projection (cm);Counts", projz_NBINS,
@@ -417,16 +448,24 @@ void gem_diagnostic_plots() {
         int trackID = static_cast<int>(kin_trackID_0[k]);
         h_d0_all_box_cut->Fill(trk_d0[trackID]);
         h_projz_all_box_cut->Fill(trk_projz[trackID]);
+        h_projz_vs_reactz_sig->Fill(trk_projz[trackID], reactz); // FIXME
         h_projy_all_box_cut->Fill(trk_projy[trackID]);
         h_hittime_box_cut->Fill(kin_hittime_0[k]);
+        h_gem_time_all_box_cut->Fill(trk_time[trackID]);
+        h_gem_dt_all_box_cut->Fill(trk_dt[trackID]);
 
         if (trk_d0_good[trackID] > 0) {
           h_d0_good_box_cut->Fill(trk_d0[trackID]);
           h_projz_good_box_cut->Fill(trk_projz[trackID]);
           h_projy_good_box_cut->Fill(trk_projy[trackID]);
+          h_gem_time_good_box_cut->Fill(trk_time[trackID]);
+          h_gem_dt_good_box_cut->Fill(trk_dt[trackID]);
         } else {
           h_d0_bad_box_cut->Fill(trk_d0[trackID]);
           h_projz_bad_box_cut->Fill(trk_projz[trackID]);
+          h_projy_bad_box_cut->Fill(trk_projy[trackID]);
+          h_gem_time_bad_box_cut->Fill(trk_time[trackID]);
+          h_gem_dt_bad_box_cut->Fill(trk_dt[trackID]);
         }
       }
       // Fill the 2D histograms
@@ -518,13 +557,86 @@ void gem_diagnostic_plots() {
   h_d0_all_box_cut->Write();
   h_d0_good_box_cut->Write();
   h_d0_bad_box_cut->Write();
-  h_projz_all_box_cut->Write();
-  h_projz_good_box_cut->Write();
-  h_projz_bad_box_cut->Write();
-  h_projy_all_box_cut->Write();
-  h_projy_good_box_cut->Write();
-  h_projy_bad_box_cut->Write();
+  // Create a canvas for projz and projy (All, Good, Bad)
+  TCanvas *c_projz_projy_all = new TCanvas("c_projz_projy_all", "Projz and Projy All Box Cut", 1200, 600);
+  c_projz_projy_all->Divide(2, 1);
+  c_projz_projy_all->cd(1);
+  h_projz_all_box_cut->Draw("HIST");
+  c_projz_projy_all->cd(2);
+  h_projy_all_box_cut->Draw("HIST");
+  c_projz_projy_all->Write();
+
+  TCanvas *c_projz_projy_good = new TCanvas("c_projz_projy_good", "Projz and Projy Good Box Cut", 1200, 600);
+  c_projz_projy_good->Divide(2, 1);
+  c_projz_projy_good->cd(1);
+  h_projz_good_box_cut->Draw("HIST");
+  c_projz_projy_good->cd(2);
+  h_projy_good_box_cut->Draw("HIST");
+  c_projz_projy_good->Write();
+
+  TCanvas *c_projz_projy_bad = new TCanvas("c_projz_projy_bad", "Projz and Projy Bad Box Cut", 1200, 600);
+  c_projz_projy_bad->Divide(2, 1);
+  c_projz_projy_bad->cd(1);
+  h_projz_bad_box_cut->Draw("HIST");
+  c_projz_projy_bad->cd(2);
+  h_projy_bad_box_cut->Draw("HIST");
+  c_projz_projy_bad->Write();
   h_hittime_box_cut->Write();
+  h_gem_time_all_box_cut->Write();
+  h_gem_time_good_box_cut->Write();
+  h_gem_time_bad_box_cut->Write();
+  h_gem_dt_all_box_cut->Write();
+  h_gem_dt_good_box_cut->Write();
+  h_gem_dt_bad_box_cut->Write();
+
+  // Create a canvas with 1x2 pads
+  TCanvas *c_projz_vs_elz = new TCanvas("c_projz_vs_elz", "Projz vs ELZ with Boxes", 1200, 600);
+  c_projz_vs_elz->Divide(2, 1);
+
+  // Draw the 2D histogram on the left pad
+  c_projz_vs_elz->cd(1);
+  h_projz_vs_reactz_sig->Draw("COLZ");
+
+  // Draw lines at x = ±5 and y = ±5
+  TLine *line_x1 = new TLine(-5, projz_MIN, -5, projz_MAX);
+  TLine *line_x2 = new TLine(5, projz_MIN, 5, projz_MAX);
+  TLine *line_y1 = new TLine(projz_MIN, -5, projz_MAX, -5);
+  TLine *line_y2 = new TLine(projz_MIN, 5, projz_MAX, 5);
+  line_x1->SetLineColor(kRed);
+  line_x2->SetLineColor(kRed);
+  line_y1->SetLineColor(kRed);
+  line_y2->SetLineColor(kRed);
+  line_x1->Draw();
+  line_x2->Draw();
+  line_y1->Draw();
+  line_y2->Draw();
+
+  // Calculate the sum of events in each 3x3 box
+  c_projz_vs_elz->cd(2);
+  TH2D *h_box_sums =
+      new TH2D("h_box_sums", "Sum of Events in each foil combo;ELZ (cm);Projz (cm)", 3, -15, 15, 3, -15, 15);
+
+  for (int x_bin = 1; x_bin <= 3; ++x_bin) {
+    for (int y_bin = 1; y_bin <= 3; ++y_bin) {
+      double x_min = h_box_sums->GetXaxis()->GetBinLowEdge(x_bin);
+      double x_max = h_box_sums->GetXaxis()->GetBinUpEdge(x_bin);
+      double y_min = h_box_sums->GetYaxis()->GetBinLowEdge(y_bin);
+      double y_max = h_box_sums->GetYaxis()->GetBinUpEdge(y_bin);
+
+      int bin_x_min = h_projz_vs_reactz_sig->GetXaxis()->FindBin(x_min);
+      int bin_x_max = h_projz_vs_reactz_sig->GetXaxis()->FindBin(x_max);
+      int bin_y_min = h_projz_vs_reactz_sig->GetYaxis()->FindBin(y_min);
+      int bin_y_max = h_projz_vs_reactz_sig->GetYaxis()->FindBin(y_max);
+
+      double sum = h_projz_vs_reactz_sig->Integral(bin_x_min, bin_x_max, bin_y_min, bin_y_max);
+      h_box_sums->SetBinContent(x_bin, y_bin, sum);
+    }
+  }
+
+  h_box_sums->Draw("COLZ TEXT");
+
+  // Write the canvas to the output file
+  c_projz_vs_elz->Write();
 
   // Write canvases
   // Create a new directory for canvases
