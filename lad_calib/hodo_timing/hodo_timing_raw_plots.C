@@ -1,8 +1,8 @@
 // Lucas Ehinger
 // General LAD hodo plotting script
-// Multithreaded, to speed up the process
-// It's absolutely terrible when it comes to memory management, but it works
-// Multi-threading with ROOT which is inherently not thread-safe is hard, and I wasn't smart enough to do it elegantly,
+// Multithreaded, to speed up the processing
+// Not great when it comes to memory management (requires lots of memory). No errors or major memory leaks, just duplication of memory across threads since root doesn't like mutexes.
+// Multi-threading with ROOT (which is inherently not thread-safe) is hard, and I wasn't smart enough to do it elegantly,
 // but this works.
 #include </usr/lib/gcc/x86_64-redhat-linux/11/include/omp.h>
 #include <TCanvas.h>
