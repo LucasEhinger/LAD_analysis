@@ -16,8 +16,8 @@ using namespace std;
 const double min_projy = -5.0;
 const double max_projy = 0.0;
 const double max_d0    = 30.0;
-const double max_dHoriz = 50.0; // Maximum horizontal distance from LAD
-const double max_dVert = 50.0; // Maximum vertical distance from LAD
+const double max_dHoriz = 80.0; // Maximum horizontal distance from LAD
+const double max_dVert = 80.0; // Maximum vertical distance from LAD
 
 // const double min_projz = -13.0;
 // const double max_projz = 13.0;
@@ -68,13 +68,13 @@ const int dy_NBINS  = 60;
 
 void gem_good_track_properties() {
 
-  TString fileName = Form("/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22572_0_6_2000000.root");
+  TString fileName = Form("/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22812_0_0_-1.root");
 
                      //  "LAD_COIN_22282_-1_inverted.root";
                      //  "LAD_COIN_22282_-1_500trks_good_timing.root";
                      //  "LAD_COIN_22383_0_0_500002.root";
 
-  TString outputFileName = Form("gem_good_track_histos_%d_-1_P.root", 22572);
+  TString outputFileName = Form("files/good_track_histos/gem_good_track_histos_%d_-1_P.root", 22812);
   // Open the ROOT file
   TFile *file = TFile::Open(fileName);
   if (!file || file->IsZombie()) {
@@ -117,7 +117,7 @@ void gem_good_track_properties() {
   Double_t good_hit_time[MAX_DATA], good_hit_plane[MAX_DATA], good_hit_paddle[MAX_DATA];
   Double_t good_hit_track_ID[MAX_DATA], good_hit_dTrkHoriz[MAX_DATA], good_hit_dTrkVert[MAX_DATA];
   Int_t nGoodHits = 0;
-  char spect_prefix = 'P'; // Default to 'H', can be changed to 'P' if needed
+  char spect_prefix = 'H'; // Default to 'H', can be changed to 'P' if needed
 
   T->SetBranchAddress(Form("Ndata.%c.gem.trk.d0", spect_prefix), &nTracks);
   T->SetBranchAddress(Form("%c.gem.trk.d0", spect_prefix), &trk_d0);
@@ -149,7 +149,7 @@ void gem_good_track_properties() {
   T->SetBranchAddress(Form("%c.gem.sp.clusID2", spect_prefix), &sp_clusID2);
   T->SetBranchAddress(Form("%c.gem.sp.adc", spect_prefix), &sp_adc);
 
-  T->SetBranchAddress(Form("Ndata.%c.gem.clust.n", spect_prefix), &nClusters);
+  T->SetBranchAddress(Form("Ndata.%c.gem.clust.time", spect_prefix), &nClusters);
   T->SetBranchAddress(Form("%c.gem.clust.time", spect_prefix), &clust_time);
   T->SetBranchAddress(Form("%c.gem.clust.nstrip", spect_prefix), &clust_nstrip);
   T->SetBranchAddress(Form("%c.gem.clust.module", spect_prefix), &clust_module);
@@ -222,7 +222,7 @@ void gem_good_track_properties() {
 
   // Loop through the tree entries
   Long64_t nEntries = T->GetEntries();
-  nEntries          = 10000; // For testing purposes, limit to 1000 entries
+  // nEntries          = 10000; // For testing purposes, limit to 1000 entries
   for (Long64_t i = 0; i < nEntries; ++i) {
     T->GetEntry(i);
     // Loop through the good hits

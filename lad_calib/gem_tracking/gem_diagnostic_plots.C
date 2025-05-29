@@ -66,7 +66,7 @@ void gem_diagnostic_plots(int runnum = 0) {
                           runnum);
   //  "LAD_COIN_22073_-1.root";
   //  "LAD_COIN_22282_0_0_500002.root";
-  TString outputFileName = Form("gem_diagnostic_plots_%d_-1.root", runnum);
+  TString outputFileName = Form("files/gem_diagnostic_plots/gem_diagnostic_plots_%d_-1.root", runnum);
   // Open the ROOT file
   TFile *file = TFile::Open(fileName);
   if (!file || file->IsZombie()) {
@@ -99,7 +99,7 @@ void gem_diagnostic_plots(int runnum = 0) {
   Int_t nTracks, nGoodHits;
   Double_t reactz;
 
-  char spec_prefix = 'P'; // Define the character variable for the prefix
+  char spec_prefix = 'H'; // Define the character variable for the prefix
 
   T->SetBranchAddress(Form("Ndata.%c.gem.trk.d0", spec_prefix), &nTracks);
   T->SetBranchAddress(Form("Ndata.%c.ladkin.goodhit_trackid_0", spec_prefix), &nGoodHits);

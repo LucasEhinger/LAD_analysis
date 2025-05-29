@@ -630,7 +630,7 @@ int hodo_timing_raw_plots() {
       "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22572_0_6_2000000.root"};
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22382_0_21_-1.root",
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22382_0_21_-1_1.root"};
-  TString outputFileName = Form("raw_hodo_timing_plots_22572_%c.root", spec_prefix);
+  TString outputFileName = Form("files/raw_hodo_timing_plots/raw_hodo_timing_plots_22572_%c.root", spec_prefix);
 
   // Create a TChain to combine the trees from multiple files
   TChain *chain = new TChain("T");

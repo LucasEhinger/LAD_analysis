@@ -21,7 +21,7 @@
 using namespace std;
 
 const int MAX_DATA     = 500;
-const int MAX_DATA_GEM = 1000;
+const int MAX_DATA_GEM = 3000;
 
 struct hist_params {
   int NBINS;
@@ -34,7 +34,7 @@ const hist_params projz_params        = {100, -20.0, 20.0};
 const hist_params gem_X_params        = {100, -70.0, 70.0};
 const hist_params gem_Y_params        = {100, -40.0, 40.0};
 const hist_params dTrk_params         = {100, -500.0, 500.0};
-const hist_params time_params         = {100, 1700.0, 2000.0};
+const hist_params time_params         = {100, 1600.0, 2000.0};
 const hist_params tof_params          = {100, -300, 500};
 const hist_params raw_tdc_time_params = {100, 0, 4000};
 const hist_params raw_adc_time_params = {100, 0, 500};
@@ -51,8 +51,8 @@ const double ADC2NS = 0.0625; // ADC to ns conversion factor
 // const double ADC2PC = 0.1;   // ADC to percent conversion factor
 // const double ADC2mV = 0.1;  // ADC to mV conversion factor
 
-const int MINT_EVTS_PER_THREAD = 10000;
-
+const int MINT_EVTS_PER_THREAD = 20000;
+const  char spec_prefix = 'H'; // Default value
 struct track_cut {
   double dTrkVert_cut;
   double dTrkHoriz_cut;
@@ -60,10 +60,11 @@ struct track_cut {
   string cut_name;
 };
 
-const int nTrackCuts             = 4;
+const int nTrackCuts             = 5;
 track_cut track_cuts[nTrackCuts] = {{2000, 2000.0, 200.0, "loose"},
                                     {100.0, 2000.0, 200.0, "trans_50"},
                                     {100.0, 100.0, 100.0, "trans_50_long_100"},
+                                    {100.0, 100.0, 25.0, "trans_50_long_100_d0_25"},
                                     {100.0, 100.0, 10.0, "trans_50_long_100_d0_10"}};
 // const int nTrackCuts             = 1;
 // track_cut track_cuts[nTrackCuts] = {{2000, 2000.0, 200.0, "loose"}};
@@ -268,7 +269,6 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
   Int_t nData_adc[N_PLANES][N_SIDES];
   Int_t nData_tdc[N_PLANES][N_SIDES];
   Double_t hodo_start_time, pTRIG1, pTRIG2, pTRIG3, pTRIG4, evtyp;
-  char spec_prefix = 'P'; // Default value
 
   T->SetBranchAddress(Form("Ndata.%c.gem.trk.d0", spec_prefix), &nTracks);
   T->SetBranchAddress(Form("Ndata.%c.ladkin.goodhit_trackid_0", spec_prefix), &nGoodHits);
@@ -498,10 +498,25 @@ void hodo_timing_plots() {
   std::vector<TString> fileNames = {
       // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22591_0_2_-1.root"};
 
-  "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22572_0_6_2000000.root"};
+  // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22572_0_6_2000000.root"};
+  // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/first_seg_runs/LAD_COIN_22615_6_6_-1.root"  
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22382_0_21_-1.root",
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22382_0_21_-1_1.root"};
-  TString outputFileName = "hodo_timing_plots_22572_P.root";
+
+  // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22562_0_0_-1.root",
+  // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22563_0_0_-1.root",
+  // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22564_0_0_-1.root", 
+  // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22565_0_0_-1.root",
+  // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22566_0_0_-1.root",
+  // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22567_0_0_-1.root", 
+  // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22568_0_0_-1.root", 
+
+  "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22611_0_6_-1.root", 
+
+
+};
+
+  TString outputFileName = Form("files/hodo_timing_plots/hodo_timing_plots_22611_%c.root", spec_prefix);
 
   // Create a TChain to combine the trees from multiple files
   TChain *chain = new TChain("T");

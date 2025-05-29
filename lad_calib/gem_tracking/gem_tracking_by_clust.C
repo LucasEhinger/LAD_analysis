@@ -209,7 +209,7 @@ void gem_tracking_by_clust() {
   //  "LAD_COIN_22383_0_0_500002.root";
 
   TFile *file            = new TFile(fileNames[0]);
-  TString outputFileName = Form("tracking_gem_22572_-1_P.root");
+  TString outputFileName = Form("files/tracking_gem/tracking_gem_22572_-1_P.root");
   // Create a TChain instead of a TTree
   // TChain *T = new TChain("T");
   TTree *T = (TTree *)file->Get("T");

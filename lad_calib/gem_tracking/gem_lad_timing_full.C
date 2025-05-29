@@ -174,7 +174,7 @@ void gem_lad_timing_full(int run_num) {
                      //  "LAD_COIN_22282_-1_500trks_good_timing.root";
                      //  "LAD_COIN_22383_0_0_500002.root";
 
-  TString outputFileName = Form("gem_window_%d_-1_P.root", run_num);
+  TString outputFileName = Form("files/gem_window/gem_window_%d_-1_P.root", run_num);
   // Open the ROOT file
   TFile *file = TFile::Open(fileName);
   if (!file || file->IsZombie()) {

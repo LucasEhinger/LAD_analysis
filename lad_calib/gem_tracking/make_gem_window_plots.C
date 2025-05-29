@@ -39,7 +39,7 @@ void make_gem_window_plots() {
     int latency   = entry.second;
 
     // Construct the ROOT file name based on the run number
-    std::string fileName = "gem_window_" + std::to_string(runNumber) + "_-1_P.root";
+    std::string fileName = "files/gem_window/gem_window_" + std::to_string(runNumber) + "_-1_P.root";
 
     // Open the ROOT file
     TFile *file = TFile::Open(fileName.c_str(), "READ");

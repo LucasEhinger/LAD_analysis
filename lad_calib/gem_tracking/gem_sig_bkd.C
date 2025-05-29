@@ -57,7 +57,7 @@ void run_gem_sig_bkd(int run_number, int num_replayed) {
   // Open the ROOT file
   TString fileName = Form("/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_%d_%d.root",
                           run_number, num_replayed);
-  TString outputFileName = Form("gem_sig_bkd_plots_%d_%d.root", run_number, num_replayed);
+  TString outputFileName = Form("files/sig_bkd/gem_sig_bkd_plots_%d_%d.root", run_number, num_replayed);
   // Open the ROOT file
   TFile *file = TFile::Open(fileName);
   if (!file || file->IsZombie()) {
