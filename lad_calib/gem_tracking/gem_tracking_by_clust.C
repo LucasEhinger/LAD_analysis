@@ -25,7 +25,8 @@ const double projz_sigma       = 5.0;
 const int nFixedz              = 3;
 const double target_z[nFixedz] = {-10.0, 0.0, 10.0}; // Fixed z positions for the planes
 
-const double TDC2NS = 0.09766; // ns per TDC channel
+const double TDC2NS     = 0.09766; // ns per TDC channel
+const char spect_prefix = 'H';     // Default to 'H', can be changed to 'P' if needed
 
 struct hist_range {
   double min;
@@ -68,8 +69,9 @@ const double dy_min = -40.0;
 const double dy_max = 40.0;
 const int dy_NBINS  = 40;
 
-const double MAX_DX_CLUST = 5.0; // Maximum dx for cluster hits
-const double MAX_DY_CLUST = 5.0; // Maximum dy for cluster hits
+const int n_dxy_cuts             = 5;                // Number of dxy cuts
+const double dx_cuts[n_dxy_cuts] = {1, 2, 4, 6, 10}; // dxy cuts in mm
+const double dy_cuts[n_dxy_cuts] = {1, 2, 4, 6, 10}; // dxy cuts in mm
 
 double gem_theta = 127.0;            // Angle in degrees
 double gem_phi   = 0.0;              // Angle in degrees
@@ -188,7 +190,7 @@ void gem_tracking_by_clust() {
   // Set ROOT to batch mode to avoid opening canvases
   gROOT->SetBatch(kTRUE);
   std::vector<TString> fileNames = {
-      Form("/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22572_0_6_2000000.root")
+      Form("/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22614_0_6_-1.root")
       // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22565_0_0_-1.root"
       // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_296_0_0_-1.root"
       // "LAD_COIN_22282_-1_inverted.root",
@@ -209,7 +211,7 @@ void gem_tracking_by_clust() {
   //  "LAD_COIN_22383_0_0_500002.root";
 
   TFile *file            = new TFile(fileNames[0]);
-  TString outputFileName = Form("files/tracking_gem/tracking_gem_22572_-1_P.root");
+  TString outputFileName = Form("files/tracking_gem/tracking_gem_22614_-1_%c.root", spect_prefix);
   // Create a TChain instead of a TTree
   // TChain *T = new TChain("T");
   TTree *T = (TTree *)file->Get("T");
@@ -240,7 +242,6 @@ void gem_tracking_by_clust() {
 
   Double_t time_avg[nPlanes][MAX_DATA], time_avg_paddle[nPlanes][MAX_DATA], time_avg_ypos[nPlanes][MAX_DATA];
   Int_t nData_hodo[nPlanes];
-  char spect_prefix = 'P'; // Default to 'H', can be changed to 'P' if needed
 
   T->SetBranchAddress(Form("Ndata.%c.gem.clust.pos", spect_prefix), &nData_clust);
   T->SetBranchAddress(Form("%c.gem.clust.pos", spect_prefix), &clust_pos);
@@ -325,26 +326,26 @@ void gem_tracking_by_clust() {
   TH1F *h_gem_sp_dx_punchthrough_min_after[2][nPlanes], *h_gem_sp_dy_punchthrough_min_after[2][nPlanes];
 
   // Hodo Time Histograms
-  TH1F *h_hodo_time[nPlanes];
-  TH1F *h_hodo_time_GEM0_x[nPlanes];
-  TH1F *h_hodo_time_GEM0_y[nPlanes];
-  TH1F *h_hodo_time_GEM1_x[nPlanes];
-  TH1F *h_hodo_time_GEM1_y[nPlanes];
-  TH1F *h_hodo_time_GEM0_x_punchthrough[nPlanes];
-  TH1F *h_hodo_time_GEM0_y_punchthrough[nPlanes];
-  TH1F *h_hodo_time_GEM1_x_punchthrough[nPlanes];
-  TH1F *h_hodo_time_GEM1_y_punchthrough[nPlanes];
+  TH1F *h_hodo_time[n_dxy_cuts][nPlanes]                     = {nullptr};
+  TH1F *h_hodo_time_GEM0_x[n_dxy_cuts][nPlanes]              = {nullptr};
+  TH1F *h_hodo_time_GEM0_y[n_dxy_cuts][nPlanes]              = {nullptr};
+  TH1F *h_hodo_time_GEM1_x[n_dxy_cuts][nPlanes]              = {nullptr};
+  TH1F *h_hodo_time_GEM1_y[n_dxy_cuts][nPlanes]              = {nullptr};
+  TH1F *h_hodo_time_GEM0_x_punchthrough[n_dxy_cuts][nPlanes] = {nullptr};
+  TH1F *h_hodo_time_GEM0_y_punchthrough[n_dxy_cuts][nPlanes] = {nullptr};
+  TH1F *h_hodo_time_GEM1_x_punchthrough[n_dxy_cuts][nPlanes] = {nullptr};
+  TH1F *h_hodo_time_GEM1_y_punchthrough[n_dxy_cuts][nPlanes] = {nullptr};
 
-  TH1F *h_hodo_time_GEM0_xy[nPlanes];
-  TH1F *h_hodo_time_GEM1_xy[nPlanes];
-  TH1F *h_hodo_time_GEM_all_x[nPlanes];
-  TH1F *h_hodo_time_GEM_all_y[nPlanes];
-  TH1F *h_hodo_time_GEM_all_xy[nPlanes];
-  TH1F *h_hodo_time_GEM0_xy_punchthrough[nPlanes];
-  TH1F *h_hodo_time_GEM1_xy_punchthrough[nPlanes];
-  TH1F *h_hodo_time_GEM_all_x_punchthrough[nPlanes];
-  TH1F *h_hodo_time_GEM_all_y_punchthrough[nPlanes];
-  TH1F *h_hodo_time_GEM_all_xy_punchthrough[nPlanes];
+  TH1F *h_hodo_time_GEM0_xy[n_dxy_cuts][nPlanes]                 = {nullptr};
+  TH1F *h_hodo_time_GEM1_xy[n_dxy_cuts][nPlanes]                 = {nullptr};
+  TH1F *h_hodo_time_GEM_all_x[n_dxy_cuts][nPlanes]               = {nullptr};
+  TH1F *h_hodo_time_GEM_all_y[n_dxy_cuts][nPlanes]               = {nullptr};
+  TH1F *h_hodo_time_GEM_all_xy[n_dxy_cuts][nPlanes]              = {nullptr};
+  TH1F *h_hodo_time_GEM0_xy_punchthrough[n_dxy_cuts][nPlanes]    = {nullptr};
+  TH1F *h_hodo_time_GEM1_xy_punchthrough[n_dxy_cuts][nPlanes]    = {nullptr};
+  TH1F *h_hodo_time_GEM_all_x_punchthrough[n_dxy_cuts][nPlanes]  = {nullptr};
+  TH1F *h_hodo_time_GEM_all_y_punchthrough[n_dxy_cuts][nPlanes]  = {nullptr};
+  TH1F *h_hodo_time_GEM_all_xy_punchthrough[n_dxy_cuts][nPlanes] = {nullptr};
 
   for (int i_plane = 0; i_plane < nPlanes; ++i_plane) {
     for (int i_gem = 0; i_gem < 2; ++i_gem) {
@@ -647,83 +648,111 @@ void gem_tracking_by_clust() {
     }
     // Hodo time histograms
 
-    h_hodo_time[i_plane] = new TH1F(Form("h_hodo_time_%s", plane_names[i_plane].c_str()),
-                                    Form("h_hodo_time_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()),
-                                    lad_time.nbins, lad_time.min, lad_time.max);
-    h_hodo_time_GEM0_x[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM0_x_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM0_x_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()), lad_time.nbins,
-                 lad_time.min, lad_time.max);
-    h_hodo_time_GEM0_y[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM0_y_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM0_y_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()), lad_time.nbins,
-                 lad_time.min, lad_time.max);
-    h_hodo_time_GEM1_x[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM1_x_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM1_x_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()), lad_time.nbins,
-                 lad_time.min, lad_time.max);
-    h_hodo_time_GEM1_y[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM1_y_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM1_y_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()), lad_time.nbins,
-                 lad_time.min, lad_time.max);
-    h_hodo_time_GEM0_x_punchthrough[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM0_x_punchthrough_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM0_x_punchthrough_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()),
-                 lad_time.nbins, lad_time.min, lad_time.max);
-    h_hodo_time_GEM0_y_punchthrough[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM0_y_punchthrough_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM0_y_punchthrough_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()),
-                 lad_time.nbins, lad_time.min, lad_time.max);
-    h_hodo_time_GEM1_x_punchthrough[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM1_x_punchthrough_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM1_x_punchthrough_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()),
-                 lad_time.nbins, lad_time.min, lad_time.max);
-    h_hodo_time_GEM1_y_punchthrough[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM1_y_punchthrough_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM1_y_punchthrough_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()),
-                 lad_time.nbins, lad_time.min, lad_time.max);
+    for (int i_cut = 0; i_cut < n_dxy_cuts; ++i_cut) {
+      h_hodo_time[i_cut][i_plane] =
+          new TH1F(Form("h_hodo_time_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+                   Form("h_hodo_time_cut%d_%s;Hodoscope time (ns);Counts", i_cut, plane_names[i_plane].c_str()),
+                   lad_time.nbins, lad_time.min, lad_time.max);
 
-    h_hodo_time_GEM0_xy[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM0_xy_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM0_xy_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()),
-                 lad_time.nbins, lad_time.min, lad_time.max);
-    h_hodo_time_GEM1_xy[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM1_xy_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM1_xy_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()),
-                 lad_time.nbins, lad_time.min, lad_time.max);
-    h_hodo_time_GEM_all_x[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM_all_x_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM_all_x_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()),
-                 lad_time.nbins, lad_time.min, lad_time.max);
-    h_hodo_time_GEM_all_y[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM_all_y_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM_all_y_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()),
-                 lad_time.nbins, lad_time.min, lad_time.max);
-    h_hodo_time_GEM_all_xy[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM_all_xy_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM_all_xy_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()),
-                 lad_time.nbins, lad_time.min, lad_time.max);
+      h_hodo_time_GEM0_x[i_cut][i_plane] =
+          new TH1F(Form("h_hodo_time_GEM0_x_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+                   Form("h_hodo_time_GEM0_x_cut%d_%s;Hodoscope time (ns);Counts", i_cut, plane_names[i_plane].c_str()),
+                   lad_time.nbins, lad_time.min, lad_time.max);
 
-    h_hodo_time_GEM0_xy_punchthrough[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM0_xy_punchthrough_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM0_xy_punchthrough_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()),
-                 lad_time.nbins, lad_time.min, lad_time.max);
-    h_hodo_time_GEM1_xy_punchthrough[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM1_xy_punchthrough_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM1_xy_punchthrough_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()),
-                 lad_time.nbins, lad_time.min, lad_time.max);
-    h_hodo_time_GEM_all_x_punchthrough[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM_all_x_punchthrough_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM_all_x_punchthrough_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()),
-                 lad_time.nbins, lad_time.min, lad_time.max);
-    h_hodo_time_GEM_all_y_punchthrough[i_plane] =
-        new TH1F(Form("h_hodo_time_GEM_all_y_punchthrough_%s", plane_names[i_plane].c_str()),
-                 Form("h_hodo_time_GEM_all_y_punchthrough_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()),
-                 lad_time.nbins, lad_time.min, lad_time.max);
-    h_hodo_time_GEM_all_xy_punchthrough[i_plane] = new TH1F(
-        Form("h_hodo_time_GEM_all_xy_punchthrough_%s", plane_names[i_plane].c_str()),
-        Form("h_hodo_time_GEM_all_xy_punchthrough_%s;Hodoscope time (ns);Counts", plane_names[i_plane].c_str()),
-        lad_time.nbins, lad_time.min, lad_time.max);
+      h_hodo_time_GEM0_y[i_cut][i_plane] =
+          new TH1F(Form("h_hodo_time_GEM0_y_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+                   Form("h_hodo_time_GEM0_y_cut%d_%s;Hodoscope time (ns);Counts", i_cut, plane_names[i_plane].c_str()),
+                   lad_time.nbins, lad_time.min, lad_time.max);
+
+      h_hodo_time_GEM1_x[i_cut][i_plane] =
+          new TH1F(Form("h_hodo_time_GEM1_x_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+                   Form("h_hodo_time_GEM1_x_cut%d_%s;Hodoscope time (ns);Counts", i_cut, plane_names[i_plane].c_str()),
+                   lad_time.nbins, lad_time.min, lad_time.max);
+
+      h_hodo_time_GEM1_y[i_cut][i_plane] =
+          new TH1F(Form("h_hodo_time_GEM1_y_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+                   Form("h_hodo_time_GEM1_y_cut%d_%s;Hodoscope time (ns);Counts", i_cut, plane_names[i_plane].c_str()),
+                   lad_time.nbins, lad_time.min, lad_time.max);
+
+      h_hodo_time_GEM0_x_punchthrough[i_cut][i_plane] =
+          new TH1F(Form("h_hodo_time_GEM0_x_punchthrough_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+                   Form("h_hodo_time_GEM0_x_punchthrough_cut%d_%s;Hodoscope time (ns);Counts", i_cut,
+                        plane_names[i_plane].c_str()),
+                   lad_time.nbins, lad_time.min, lad_time.max);
+
+      h_hodo_time_GEM0_y_punchthrough[i_cut][i_plane] =
+          new TH1F(Form("h_hodo_time_GEM0_y_punchthrough_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+                   Form("h_hodo_time_GEM0_y_punchthrough_cut%d_%s;Hodoscope time (ns);Counts", i_cut,
+                        plane_names[i_plane].c_str()),
+                   lad_time.nbins, lad_time.min, lad_time.max);
+
+      h_hodo_time_GEM1_x_punchthrough[i_cut][i_plane] =
+          new TH1F(Form("h_hodo_time_GEM1_x_punchthrough_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+                   Form("h_hodo_time_GEM1_x_punchthrough_cut%d_%s;Hodoscope time (ns);Counts", i_cut,
+                        plane_names[i_plane].c_str()),
+                   lad_time.nbins, lad_time.min, lad_time.max);
+
+      h_hodo_time_GEM1_y_punchthrough[i_cut][i_plane] =
+          new TH1F(Form("h_hodo_time_GEM1_y_punchthrough_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+                   Form("h_hodo_time_GEM1_y_punchthrough_cut%d_%s;Hodoscope time (ns);Counts", i_cut,
+                        plane_names[i_plane].c_str()),
+                   lad_time.nbins, lad_time.min, lad_time.max);
+
+      h_hodo_time_GEM0_xy[i_cut][i_plane] =
+          new TH1F(Form("h_hodo_time_GEM0_xy_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+                   Form("h_hodo_time_GEM0_xy_cut%d_%s;Hodoscope time (ns);Counts", i_cut, plane_names[i_plane].c_str()),
+                   lad_time.nbins, lad_time.min, lad_time.max);
+
+      h_hodo_time_GEM1_xy[i_cut][i_plane] =
+          new TH1F(Form("h_hodo_time_GEM1_xy_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+                   Form("h_hodo_time_GEM1_xy_cut%d_%s;Hodoscope time (ns);Counts", i_cut, plane_names[i_plane].c_str()),
+                   lad_time.nbins, lad_time.min, lad_time.max);
+
+      h_hodo_time_GEM_all_x[i_cut][i_plane] = new TH1F(
+          Form("h_hodo_time_GEM_all_x_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+          Form("h_hodo_time_GEM_all_x_cut%d_%s;Hodoscope time (ns);Counts", i_cut, plane_names[i_plane].c_str()),
+          lad_time.nbins, lad_time.min, lad_time.max);
+
+      h_hodo_time_GEM_all_y[i_cut][i_plane] = new TH1F(
+          Form("h_hodo_time_GEM_all_y_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+          Form("h_hodo_time_GEM_all_y_cut%d_%s;Hodoscope time (ns);Counts", i_cut, plane_names[i_plane].c_str()),
+          lad_time.nbins, lad_time.min, lad_time.max);
+
+      h_hodo_time_GEM_all_xy[i_cut][i_plane] = new TH1F(
+          Form("h_hodo_time_GEM_all_xy_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+          Form("h_hodo_time_GEM_all_xy_cut%d_%s;Hodoscope time (ns);Counts", i_cut, plane_names[i_plane].c_str()),
+          lad_time.nbins, lad_time.min, lad_time.max);
+
+      h_hodo_time_GEM0_xy_punchthrough[i_cut][i_plane] =
+          new TH1F(Form("h_hodo_time_GEM0_xy_punchthrough_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+                   Form("h_hodo_time_GEM0_xy_punchthrough_cut%d_%s;Hodoscope time (ns);Counts", i_cut,
+                        plane_names[i_plane].c_str()),
+                   lad_time.nbins, lad_time.min, lad_time.max);
+
+      h_hodo_time_GEM1_xy_punchthrough[i_cut][i_plane] =
+          new TH1F(Form("h_hodo_time_GEM1_xy_punchthrough_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+                   Form("h_hodo_time_GEM1_xy_punchthrough_cut%d_%s;Hodoscope time (ns);Counts", i_cut,
+                        plane_names[i_plane].c_str()),
+                   lad_time.nbins, lad_time.min, lad_time.max);
+
+      h_hodo_time_GEM_all_x_punchthrough[i_cut][i_plane] =
+          new TH1F(Form("h_hodo_time_GEM_all_x_punchthrough_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+                   Form("h_hodo_time_GEM_all_x_punchthrough_cut%d_%s;Hodoscope time (ns);Counts", i_cut,
+                        plane_names[i_plane].c_str()),
+                   lad_time.nbins, lad_time.min, lad_time.max);
+
+      h_hodo_time_GEM_all_y_punchthrough[i_cut][i_plane] =
+          new TH1F(Form("h_hodo_time_GEM_all_y_punchthrough_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+                   Form("h_hodo_time_GEM_all_y_punchthrough_cut%d_%s;Hodoscope time (ns);Counts", i_cut,
+                        plane_names[i_plane].c_str()),
+                   lad_time.nbins, lad_time.min, lad_time.max);
+
+      h_hodo_time_GEM_all_xy_punchthrough[i_cut][i_plane] =
+          new TH1F(Form("h_hodo_time_GEM_all_xy_punchthrough_cut%d_%s", i_cut, plane_names[i_plane].c_str()),
+                   Form("h_hodo_time_GEM_all_xy_punchthrough_cut%d_%s;Hodoscope time (ns);Counts", i_cut,
+                        plane_names[i_plane].c_str()),
+                   lad_time.nbins, lad_time.min, lad_time.max);
+    }
   }
   ///////////////////////////////////////////////////////////////////
 
@@ -908,52 +937,56 @@ void gem_tracking_by_clust() {
         }
 
         // Fill time histograms
-        h_hodo_time[i_plane]->Fill(time_avg[i_plane][i_hit]);
-        if (fabs(clust_min_dx[0]) < MAX_DX_CLUST && fabs(clust_min_dy[0]) < MAX_DY_CLUST) {
-          h_hodo_time_GEM0_xy[i_plane]->Fill(time_avg[i_plane][i_hit]);
-          if (is_punchthrough)
-            h_hodo_time_GEM0_xy_punchthrough[i_plane]->Fill(time_avg[i_plane][i_hit]);
-        }
-        if (fabs(clust_min_dx[1]) < MAX_DX_CLUST && fabs(clust_min_dy[1]) < MAX_DY_CLUST) {
-          h_hodo_time_GEM1_xy[i_plane]->Fill(time_avg[i_plane][i_hit]);
-          if (is_punchthrough)
-            h_hodo_time_GEM1_xy_punchthrough[i_plane]->Fill(time_avg[i_plane][i_hit]);
-        }
-        if (fabs(clust_min_dx[0]) < MAX_DX_CLUST) {
-          h_hodo_time_GEM0_x[i_plane]->Fill(time_avg[i_plane][i_hit]);
-          if (is_punchthrough)
-            h_hodo_time_GEM0_x_punchthrough[i_plane]->Fill(time_avg[i_plane][i_hit]);
-        }
-        if (fabs(clust_min_dy[0]) < MAX_DY_CLUST) {
-          h_hodo_time_GEM0_y[i_plane]->Fill(time_avg[i_plane][i_hit]);
-          if (is_punchthrough)
-            h_hodo_time_GEM0_y_punchthrough[i_plane]->Fill(time_avg[i_plane][i_hit]);
-        }
-        if (fabs(clust_min_dx[1]) < MAX_DX_CLUST) {
-          h_hodo_time_GEM1_x[i_plane]->Fill(time_avg[i_plane][i_hit]);
-          if (is_punchthrough)
-            h_hodo_time_GEM1_x_punchthrough[i_plane]->Fill(time_avg[i_plane][i_hit]);
-        }
-        if (fabs(clust_min_dy[1]) < MAX_DY_CLUST) {
-          h_hodo_time_GEM1_y[i_plane]->Fill(time_avg[i_plane][i_hit]);
-          if (is_punchthrough)
-            h_hodo_time_GEM1_y_punchthrough[i_plane]->Fill(time_avg[i_plane][i_hit]);
-        }
-        if (fabs(clust_min_dx[0]) < MAX_DX_CLUST && fabs(clust_min_dx[1]) < MAX_DX_CLUST) {
-          h_hodo_time_GEM_all_x[i_plane]->Fill(time_avg[i_plane][i_hit]);
-          if (is_punchthrough)
-            h_hodo_time_GEM_all_x_punchthrough[i_plane]->Fill(time_avg[i_plane][i_hit]);
-        }
-        if (fabs(clust_min_dy[0]) < MAX_DY_CLUST && fabs(clust_min_dy[1]) < MAX_DY_CLUST) {
-          h_hodo_time_GEM_all_y[i_plane]->Fill(time_avg[i_plane][i_hit]);
-          if (is_punchthrough)
-            h_hodo_time_GEM_all_y_punchthrough[i_plane]->Fill(time_avg[i_plane][i_hit]);
-        }
-        if (fabs(clust_min_dx[0]) < MAX_DX_CLUST && fabs(clust_min_dy[0]) < MAX_DY_CLUST &&
-            fabs(clust_min_dx[1]) < MAX_DX_CLUST && fabs(clust_min_dy[1]) < MAX_DY_CLUST) {
-          h_hodo_time_GEM_all_xy[i_plane]->Fill(time_avg[i_plane][i_hit]);
-          if (is_punchthrough)
-            h_hodo_time_GEM_all_xy_punchthrough[i_plane]->Fill(time_avg[i_plane][i_hit]);
+        for (int i_cut = 0; i_cut < n_dxy_cuts; ++i_cut) {
+          double max_dx = dx_cuts[i_cut];
+          double max_dy = dy_cuts[i_cut];
+          h_hodo_time[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+          if (fabs(clust_min_dx[0]) < max_dx && fabs(clust_min_dy[0]) < max_dy) {
+            h_hodo_time_GEM0_xy[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+            if (is_punchthrough)
+              h_hodo_time_GEM0_xy_punchthrough[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+          }
+          if (fabs(clust_min_dx[1]) < max_dx && fabs(clust_min_dy[1]) < max_dy) {
+            h_hodo_time_GEM1_xy[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+            if (is_punchthrough)
+              h_hodo_time_GEM1_xy_punchthrough[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+          }
+          if (fabs(clust_min_dx[0]) < max_dx) {
+            h_hodo_time_GEM0_x[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+            if (is_punchthrough)
+              h_hodo_time_GEM0_x_punchthrough[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+          }
+          if (fabs(clust_min_dy[0]) < max_dy) {
+            h_hodo_time_GEM0_y[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+            if (is_punchthrough)
+              h_hodo_time_GEM0_y_punchthrough[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+          }
+          if (fabs(clust_min_dx[1]) < max_dx) {
+            h_hodo_time_GEM1_x[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+            if (is_punchthrough)
+              h_hodo_time_GEM1_x_punchthrough[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+          }
+          if (fabs(clust_min_dy[1]) < max_dy) {
+            h_hodo_time_GEM1_y[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+            if (is_punchthrough)
+              h_hodo_time_GEM1_y_punchthrough[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+          }
+          if (fabs(clust_min_dx[0]) < max_dx && fabs(clust_min_dx[1]) < max_dx) {
+            h_hodo_time_GEM_all_x[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+            if (is_punchthrough)
+              h_hodo_time_GEM_all_x_punchthrough[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+          }
+          if (fabs(clust_min_dy[0]) < max_dy && fabs(clust_min_dy[1]) < max_dy) {
+            h_hodo_time_GEM_all_y[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+            if (is_punchthrough)
+              h_hodo_time_GEM_all_y_punchthrough[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+          }
+          if (fabs(clust_min_dx[0]) < max_dx && fabs(clust_min_dy[0]) < max_dy && fabs(clust_min_dx[1]) < max_dx &&
+              fabs(clust_min_dy[1]) < max_dy) {
+            h_hodo_time_GEM_all_xy[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+            if (is_punchthrough)
+              h_hodo_time_GEM_all_xy_punchthrough[i_cut][i_plane]->Fill(time_avg[i_plane][i_hit]);
+          }
         }
 
         // Loop through the space points
@@ -1041,6 +1074,9 @@ void gem_tracking_by_clust() {
 
   for (int i_plane = 0; i_plane < nPlanes; ++i_plane) {
     outputFile->mkdir(Form("time/%s", plane_names[i_plane].c_str()));
+    for (int i_cut = 0; i_cut < n_dxy_cuts; ++i_cut) {
+      outputFile->mkdir(Form("time/%s/cut%d", plane_names[i_plane].c_str(), i_cut));
+    }
   }
 
   outputFile->mkdir("sp/x/dx");
@@ -1251,26 +1287,28 @@ void gem_tracking_by_clust() {
       h_gem_sp_dxy_punchthrough[i_gem][i_plane]->Write();
     }
     // Write time histograms
-    outputFile->cd(Form("time/%s", plane_names[i_plane].c_str()));
-    h_hodo_time[i_plane]->Write();
-    h_hodo_time_GEM0_x[i_plane]->Write();
-    h_hodo_time_GEM0_y[i_plane]->Write();
-    h_hodo_time_GEM1_x[i_plane]->Write();
-    h_hodo_time_GEM1_y[i_plane]->Write();
-    h_hodo_time_GEM0_x_punchthrough[i_plane]->Write();
-    h_hodo_time_GEM0_y_punchthrough[i_plane]->Write();
-    h_hodo_time_GEM1_x_punchthrough[i_plane]->Write();
-    h_hodo_time_GEM1_y_punchthrough[i_plane]->Write();
-    h_hodo_time_GEM0_xy[i_plane]->Write();
-    h_hodo_time_GEM1_xy[i_plane]->Write();
-    h_hodo_time_GEM_all_x[i_plane]->Write();
-    h_hodo_time_GEM_all_y[i_plane]->Write();
-    h_hodo_time_GEM_all_xy[i_plane]->Write();
-    h_hodo_time_GEM0_xy_punchthrough[i_plane]->Write();
-    h_hodo_time_GEM1_xy_punchthrough[i_plane]->Write();
-    h_hodo_time_GEM_all_x_punchthrough[i_plane]->Write();
-    h_hodo_time_GEM_all_y_punchthrough[i_plane]->Write();
-    h_hodo_time_GEM_all_xy_punchthrough[i_plane]->Write();
+    for (int i_cut = 0; i_cut < n_dxy_cuts; ++i_cut) {
+      outputFile->cd(Form("time/%s/cut%d", plane_names[i_plane].c_str(), i_cut));
+      h_hodo_time[i_cut][i_plane]->Write();
+      h_hodo_time_GEM0_x[i_cut][i_plane]->Write();
+      h_hodo_time_GEM0_y[i_cut][i_plane]->Write();
+      h_hodo_time_GEM1_x[i_cut][i_plane]->Write();
+      h_hodo_time_GEM1_y[i_cut][i_plane]->Write();
+      h_hodo_time_GEM0_x_punchthrough[i_cut][i_plane]->Write();
+      h_hodo_time_GEM0_y_punchthrough[i_cut][i_plane]->Write();
+      h_hodo_time_GEM1_x_punchthrough[i_cut][i_plane]->Write();
+      h_hodo_time_GEM1_y_punchthrough[i_cut][i_plane]->Write();
+      h_hodo_time_GEM0_xy[i_cut][i_plane]->Write();
+      h_hodo_time_GEM1_xy[i_cut][i_plane]->Write();
+      h_hodo_time_GEM_all_x[i_cut][i_plane]->Write();
+      h_hodo_time_GEM_all_y[i_cut][i_plane]->Write();
+      h_hodo_time_GEM_all_xy[i_cut][i_plane]->Write();
+      h_hodo_time_GEM0_xy_punchthrough[i_cut][i_plane]->Write();
+      h_hodo_time_GEM1_xy_punchthrough[i_cut][i_plane]->Write();
+      h_hodo_time_GEM_all_x_punchthrough[i_cut][i_plane]->Write();
+      h_hodo_time_GEM_all_y_punchthrough[i_cut][i_plane]->Write();
+      h_hodo_time_GEM_all_xy_punchthrough[i_cut][i_plane]->Write();
+    }
   }
   // Create directories for histograms
 
