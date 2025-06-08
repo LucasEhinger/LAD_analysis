@@ -570,7 +570,7 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
     }
     // Loop over the hits and fill the arrays
     for (int plane = 0; plane < N_PLANES; ++plane) {
-      for (int i_top = 0; i_top < fullhit_n[0]; ++i_top) {
+      for (int i_top = 0; i_top < fullhit_n[plane]; ++i_top) {
         int bar = int(fullhit_paddle[plane][i_top]) - 1;
         if (bar < 0 || bar >= N_PADDLES)
           continue; // Skip invalid bars

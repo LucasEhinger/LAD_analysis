@@ -52,7 +52,7 @@ const double ADC2NS = 0.0625; // ADC to ns conversion factor
 // const double ADC2mV = 0.1;  // ADC to mV conversion factor
 
 const int MINT_EVTS_PER_THREAD = 20000;
-const  char spec_prefix = 'H'; // Default value
+const char spec_prefix         = 'H';
 struct track_cut {
   double dTrkVert_cut;
   double dTrkHoriz_cut;
@@ -413,7 +413,7 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
           hist_map_trk_cuts["h_ladkin_time_bar"][i_track_cut][int(kin_plane_0[i_goodhit])][int(kin_paddle_0[i_goodhit])]
               ->Fill(kin_hittime_0[i_goodhit]);
           hist_map_trk_cuts["h_ladkin_tof_bar"][i_track_cut][int(kin_plane_0[i_goodhit])][int(kin_paddle_0[i_goodhit])]
-            ->Fill(kin_hit_tof_0[i_goodhit]);
+              ->Fill(kin_hit_tof_0[i_goodhit]);
           hist_map_trk_cuts["h_ladkin_edep_bar"][i_track_cut][int(kin_plane_0[i_goodhit])][int(kin_paddle_0[i_goodhit])]
               ->Fill(kin_hitedep_0[i_goodhit]);
           hist_map_trk_cuts["h_ladkin_theta_bar"][i_track_cut][int(kin_plane_0[i_goodhit])]
@@ -448,7 +448,7 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
           hist_map_trk_cuts["h_ladkin_time_bar"][i_track_cut][int(kin_plane_1[i_goodhit])][int(kin_paddle_1[i_goodhit])]
               ->Fill(kin_hittime_1[i_goodhit]);
           hist_map_trk_cuts["h_ladkin_tof_bar"][i_track_cut][int(kin_plane_1[i_goodhit])][int(kin_paddle_1[i_goodhit])]
-            ->Fill(kin_hit_tof_1[i_goodhit]);
+              ->Fill(kin_hit_tof_1[i_goodhit]);
           hist_map_trk_cuts["h_ladkin_edep_bar"][i_track_cut][int(kin_plane_1[i_goodhit])][int(kin_paddle_1[i_goodhit])]
               ->Fill(kin_hitedep_1[i_goodhit]);
           hist_map_trk_cuts["h_ladkin_theta_bar"][i_track_cut][int(kin_plane_1[i_goodhit])]
@@ -465,9 +465,8 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
           hist_map_trk_cuts["h_edep_vs_time_bar"][i_track_cut][int(kin_plane_1[i_goodhit])]
                            [int(kin_paddle_1[i_goodhit])]
                                ->Fill(kin_hittime_1[i_goodhit], kin_hitedep_1[i_goodhit]);
-          hist_map_trk_cuts["h_edep_vs_tof_bar"][i_track_cut][int(kin_plane_1[i_goodhit])]
-                           [int(kin_paddle_1[i_goodhit])]
-                               ->Fill(kin_hit_tof_1[i_goodhit], kin_hitedep_1[i_goodhit]);
+          hist_map_trk_cuts["h_edep_vs_tof_bar"][i_track_cut][int(kin_plane_1[i_goodhit])][int(kin_paddle_1[i_goodhit])]
+              ->Fill(kin_hit_tof_1[i_goodhit], kin_hitedep_1[i_goodhit]);
           hist_map_trk_cuts["h_ladkin_d0_bar"][i_track_cut][int(kin_plane_1[i_goodhit])][int(kin_paddle_1[i_goodhit])]
               ->Fill(trk_d0[int(kin_trackID_1[i_goodhit])]);
           hist_map_trk_cuts["h_projz_bar"][i_track_cut][int(kin_plane_1[i_goodhit])][int(kin_paddle_1[i_goodhit])]
@@ -498,25 +497,25 @@ void hodo_timing_plots() {
   std::vector<TString> fileNames = {
       // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22591_0_2_-1.root"};
 
-  // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22572_0_6_2000000.root"};
-  // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/first_seg_runs/LAD_COIN_22615_6_6_-1.root"  
-  // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22382_0_21_-1.root",
-  // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22382_0_21_-1_1.root"};
+      // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22572_0_6_2000000.root"};
+      // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/first_seg_runs/LAD_COIN_22615_6_6_-1.root"
+      // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22382_0_21_-1.root",
+      // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22382_0_21_-1_1.root"};
 
-  // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22562_0_0_-1.root",
-  // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22563_0_0_-1.root",
-  // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22564_0_0_-1.root", 
-  // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22565_0_0_-1.root",
-  // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22566_0_0_-1.root",
-  // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22567_0_0_-1.root", 
-  // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22568_0_0_-1.root", 
+      // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22562_0_0_-1.root",
+      // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22563_0_0_-1.root",
+      // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22564_0_0_-1.root",
+      // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22565_0_0_-1.root",
+      // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22566_0_0_-1.root",
+      // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22567_0_0_-1.root",
+      // "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22568_0_0_-1.root",
 
-  "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22611_0_6_-1.root", 
+      "/lustre24/expphy/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/"
+      "LAD_COIN_22614_0_6_-1.root",
 
+  };
 
-};
-
-  TString outputFileName = Form("files/hodo_timing_plots/hodo_timing_plots_22611_%c.root", spec_prefix);
+  TString outputFileName = Form("files/hodo_timing_plots/hodo_timing_plots_22614_%c.root", spec_prefix);
 
   // Create a TChain to combine the trees from multiple files
   TChain *chain = new TChain("T");
@@ -697,11 +696,11 @@ void hodo_timing_plots() {
           hist_map_trk_cuts_vec[thread]["h_ladkin_time_bar"][i_trk_cut][plane][bar]->GetYaxis()->SetTitle("Counts");
 
           hist_map_trk_cuts_vec[thread]["h_ladkin_tof_bar"][i_trk_cut][plane][bar] =
-            new TH1F(Form("h_ladkin_tof_plane_%s_bar_%d_%s_thread_%d", plane_names[plane].c_str(), bar,
-                    track_cuts[i_trk_cut].cut_name.c_str(), thread),
-                 Form("LADKIN TOF Plane %s Bar %d %s Thread %d", plane_names[plane].c_str(), bar,
-                    track_cuts[i_trk_cut].cut_name.c_str(), thread),
-                 tof_params.NBINS, tof_params.MIN, tof_params.MAX);
+              new TH1F(Form("h_ladkin_tof_plane_%s_bar_%d_%s_thread_%d", plane_names[plane].c_str(), bar,
+                            track_cuts[i_trk_cut].cut_name.c_str(), thread),
+                       Form("LADKIN TOF Plane %s Bar %d %s Thread %d", plane_names[plane].c_str(), bar,
+                            track_cuts[i_trk_cut].cut_name.c_str(), thread),
+                       tof_params.NBINS, tof_params.MIN, tof_params.MAX);
           hist_map_trk_cuts_vec[thread]["h_ladkin_tof_bar"][i_trk_cut][plane][bar]->GetXaxis()->SetTitle("TOF (ns)");
           hist_map_trk_cuts_vec[thread]["h_ladkin_tof_bar"][i_trk_cut][plane][bar]->GetYaxis()->SetTitle("Counts");
 
@@ -1087,7 +1086,7 @@ void hodo_timing_plots() {
 
   std::_Exit(0);
   // return;
-  
+
   // gROOT->Reset();
 
   // return;
@@ -1096,7 +1095,7 @@ void hodo_timing_plots() {
   std::vector<std::thread> cleanup_threads;
   for (int thread = 0; thread < numThreads; ++thread) {
     cleanup_threads.emplace_back([&, thread]() {
-      size_t total_hist = 0;
+      size_t total_hist   = 0;
       size_t cleaned_hist = 0;
       // Count total histograms for progress bar (only for thread 0)
       if (thread == 0) {
