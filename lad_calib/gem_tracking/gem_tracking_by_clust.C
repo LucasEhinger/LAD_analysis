@@ -87,8 +87,25 @@ double gem_r[2]  = {77.571, 95.571}; // Radius of the GEM's
 double gem_dx[2] = {0.0, 0.0};       // GEM dx offsets
 double gem_dy[2] = {0.0, 0.0};       // GEM dy offsets
 
+template <typename T> double getBkdSubFactor(T *h_time_all, T *h_time_sig) {
+  double bkdSub_scale = 1.0; // Default scale factor for background subtraction
+  if (h_time_all == h_time_sig) {
+    return 1.0; // No background subtraction if the same time is used for all hits
+  } else {
+    //     bkdSub_scale = getBkdSubFactor(h_time_all, h_time_denom, name, title);
+    double D =
+        h_time_all->Integral(h_time_all->FindBin(time_window_sig.min), h_time_all->FindBin(time_window_sig.max) - 1);
+    double C =
+        h_time_sig->Integral(h_time_sig->FindBin(time_window_sig.min), h_time_sig->FindBin(time_window_sig.max) - 1);
+    double A =
+        h_time_sig->Integral(h_time_sig->FindBin(time_window_bkd.min), h_time_sig->FindBin(time_window_bkd.max) - 1);
+    bkdSub_scale = (D - C) / (D - A);
+  }
+  return bkdSub_scale;
+}
+
 template <typename T>
-void drawBkdSubHistograms(T *h_hist[nSIG_BKD], const double bkdSub_scale, const char *title, const char *name,
+void drawBkdSubHistograms(T *h_hist[nSIG_BKD], T *h_time_all, T *h_time_sig, const char *title, const char *name,
                           TFile *outfile, const char *dir_nosub, const char *dir_bkdSub) {
   // Draw histogram without background subtraction
   outfile->cd(dir_nosub);
@@ -97,6 +114,8 @@ void drawBkdSubHistograms(T *h_hist[nSIG_BKD], const double bkdSub_scale, const 
   h_sig_clone->SetMinimum(0);
   h_sig_clone->SetMaximum(1.2 * h_hist[kSIG]->GetMaximum());
   h_sig_clone->Write();
+
+  double bkdSub_scale = getBkdSubFactor(h_time_all, h_time_sig);
   // Draw histogram with background subtraction
   outfile->cd(dir_bkdSub);
   T *h_bkd_clone = (T *)h_hist[kBKD]->Clone(Form("h_%s_bkdSub", name));
@@ -113,13 +132,15 @@ void drawBkdSubHistograms(T *h_hist[nSIG_BKD], const double bkdSub_scale, const 
 }
 
 template <typename T>
-void drawEfficiencyHistograms(T *h_hits[nSIG_BKD], T *h_all[nSIG_BKD], const double bkdSub_scale, const char *title,
-                              const char *name, TFile *outfile, const char *dir_nosub, const char *dir_bkdSub) {
+void drawEfficiencyHistograms(T *h_hits[nSIG_BKD], T *h_all[nSIG_BKD], T *h_time_all, T *h_time_num, T *h_time_denom,
+                              const char *title, const char *name, TFile *outfile, const char *dir_nosub,
+                              const char *dir_bkdSub) {
 
+  double bkdSub_scale;
   // Draw histogram without background subtraction
   outfile->cd(dir_nosub);
-  T *h_eff_sig = (T *)h_hits[kSIG]->Clone(Form("h_cond_efficiency_%s", name));
-  h_eff_sig->SetTitle(Form("%s Conditional Efficiency (no bkd sub)", title));
+  T *h_eff_sig = (T *)h_hits[kSIG]->Clone(Form("h_%s", name));
+  h_eff_sig->SetTitle(Form("%s Efficiency (no bkd sub)", title));
   h_eff_sig->Divide(h_all[kSIG]);
   h_eff_sig->SetMinimum(0);
   h_eff_sig->SetMaximum(2);
@@ -127,12 +148,16 @@ void drawEfficiencyHistograms(T *h_hits[nSIG_BKD], T *h_all[nSIG_BKD], const dou
 
   // Draw histogram with background subtraction
   outfile->cd(dir_bkdSub);
+  bkdSub_scale = getBkdSubFactor(h_time_all, h_time_denom);
+
   h_all[kSIG]->Add(h_all[kBKD], -bkdSub_scale);
+
+  bkdSub_scale = getBkdSubFactor(h_time_all, h_time_num);
   h_hits[kSIG]->Add(h_hits[kBKD], -bkdSub_scale);
 
-  T *h_eff_sig_bkdSub = (T *)h_all[kSIG]->Clone(Form("h_cond_efficiency_ratio_%s", name));
-  h_eff_sig_bkdSub->SetTitle(Form("%s Conditional Efficiency (bkd sub)", title));
-  h_eff_sig_bkdSub->Divide(h_hits[kSIG]);
+  T *h_eff_sig_bkdSub = (T *)h_hits[kSIG]->Clone(Form("h_%s", name));
+  h_eff_sig_bkdSub->SetTitle(Form("%s Efficiency (bkd sub)", title));
+  h_eff_sig_bkdSub->Divide(h_all[kSIG]);
   h_eff_sig_bkdSub->SetMinimum(0);
   h_eff_sig_bkdSub->SetMaximum(2);
   h_eff_sig_bkdSub->Write();
@@ -867,14 +892,15 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
   } // End Event Loop
 }
 
-void gem_tracking_by_clust() {
+void gem_tracking_by_clust(int run_number) {
   // Set ROOT to batch mode to avoid opening canvases
   gROOT->SetBatch(kTRUE);
   ROOT::EnableThreadSafety();
   std::vector<TString> fileNames = {
       Form("/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/"
            "PRODUCTION/bad_timing/"
-           "LAD_COIN_22615_0_6_-1.root")
+           "LAD_COIN_%d_0_6_-1.root",
+           run_number)
       // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22565_0_0_-1.root"
       // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_296_0_0_-1.root"
       // "LAD_COIN_22282_-1_inverted.root",
@@ -895,7 +921,7 @@ void gem_tracking_by_clust() {
   //  "LAD_COIN_22383_0_0_500002.root";
 
   TFile *file            = new TFile(fileNames[0]);
-  TString outputFileName = Form("files/tracking_gem/tracking_gem_22615_newtiming_-1_%c.root", spect_prefix);
+  TString outputFileName = Form("files/tracking_gem/tracking_gem_%d_-1_%c.root", run_number, spect_prefix);
   // Create a TChain instead of a TTree
   // TChain *T = new TChain("T");
   TTree *T = (TTree *)file->Get("T");
@@ -909,7 +935,7 @@ void gem_tracking_by_clust() {
   }
 
   int nEntries = T->GetEntries();
-//   nEntries     = 20000;
+  //     nEntries     = 20000;
   // Number of threads to use
   int numThreads = std::thread::hardware_concurrency();
   // numThreads     = 1;
@@ -1306,59 +1332,71 @@ void gem_tracking_by_clust() {
         hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM0_x"][i_cut][i_plane][kSIG] =
             new TH1F(Form("h_hodo_time_GEM0_x_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
                           plane_names[i_plane].c_str(), thread),
-                     Form("h_hodo_time_GEM0_x_cut_dx%d_dy%d_%s;Hodoscope time (ns);Counts", dx_cuts[i_cut],
-                          dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                     Form("h_hodo_time_GEM0_x_cut_dx%d_dy%d_%s;Hodoscope "
+                          "time (ns);Counts",
+                          dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
                      lad_time.nbins, lad_time.min, lad_time.max);
 
         hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM0_y"][i_cut][i_plane][kSIG] =
             new TH1F(Form("h_hodo_time_GEM0_y_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
                           plane_names[i_plane].c_str(), thread),
-                     Form("h_hodo_time_GEM0_y_cut_dx%d_dy%d_%s;Hodoscope time (ns);Counts", dx_cuts[i_cut],
-                          dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                     Form("h_hodo_time_GEM0_y_cut_dx%d_dy%d_%s;Hodoscope "
+                          "time (ns);Counts",
+                          dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
                      lad_time.nbins, lad_time.min, lad_time.max);
 
         hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM1_x"][i_cut][i_plane][kSIG] =
             new TH1F(Form("h_hodo_time_GEM1_x_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
                           plane_names[i_plane].c_str(), thread),
-                     Form("h_hodo_time_GEM1_x_cut_dx%d_dy%d_%s;Hodoscope time (ns);Counts", dx_cuts[i_cut],
-                          dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                     Form("h_hodo_time_GEM1_x_cut_dx%d_dy%d_%s;Hodoscope "
+                          "time (ns);Counts",
+                          dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
                      lad_time.nbins, lad_time.min, lad_time.max);
 
         hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM1_y"][i_cut][i_plane][kSIG] =
             new TH1F(Form("h_hodo_time_GEM1_y_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
                           plane_names[i_plane].c_str(), thread),
-                     Form("h_hodo_time_GEM1_y_cut_dx%d_dy%d_%s;Hodoscope time (ns);Counts", dx_cuts[i_cut],
-                          dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                     Form("h_hodo_time_GEM1_y_cut_dx%d_dy%d_%s;Hodoscope "
+                          "time (ns);Counts",
+                          dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
                      lad_time.nbins, lad_time.min, lad_time.max);
 
         hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM0_x_punchthrough"][i_cut][i_plane][kSIG] =
-            new TH1F(Form("h_hodo_time_GEM0_x_punchthrough_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
-                          plane_names[i_plane].c_str(), thread),
-                     Form("h_hodo_time_GEM0_x_punchthrough_cut_dx%d_dy%d_%s;Hodoscope "
+            new TH1F(Form("h_hodo_time_GEM0_x_punchthrough_cut_dx%"
+                          "d_dy%d_%s_thread_%d",
+                          dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM0_x_punchthrough_cut_dx%"
+                          "d_dy%d_%s;Hodoscope "
                           "time (ns);Counts",
                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
                      lad_time.nbins, lad_time.min, lad_time.max);
 
         hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM0_y_punchthrough"][i_cut][i_plane][kSIG] =
-            new TH1F(Form("h_hodo_time_GEM0_y_punchthrough_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
-                          plane_names[i_plane].c_str(), thread),
-                     Form("h_hodo_time_GEM0_y_punchthrough_cut_dx%d_dy%d_%s;Hodoscope "
+            new TH1F(Form("h_hodo_time_GEM0_y_punchthrough_cut_dx%"
+                          "d_dy%d_%s_thread_%d",
+                          dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM0_y_punchthrough_cut_dx%"
+                          "d_dy%d_%s;Hodoscope "
                           "time (ns);Counts",
                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
                      lad_time.nbins, lad_time.min, lad_time.max);
 
         hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM1_x_punchthrough"][i_cut][i_plane][kSIG] =
-            new TH1F(Form("h_hodo_time_GEM1_x_punchthrough_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
-                          plane_names[i_plane].c_str(), thread),
-                     Form("h_hodo_time_GEM1_x_punchthrough_cut_dx%d_dy%d_%s;Hodoscope "
+            new TH1F(Form("h_hodo_time_GEM1_x_punchthrough_cut_dx%"
+                          "d_dy%d_%s_thread_%d",
+                          dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM1_x_punchthrough_cut_dx%"
+                          "d_dy%d_%s;Hodoscope "
                           "time (ns);Counts",
                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
                      lad_time.nbins, lad_time.min, lad_time.max);
 
         hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM1_y_punchthrough"][i_cut][i_plane][kSIG] =
-            new TH1F(Form("h_hodo_time_GEM1_y_punchthrough_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
-                          plane_names[i_plane].c_str(), thread),
-                     Form("h_hodo_time_GEM1_y_punchthrough_cut_dx%d_dy%d_%s;Hodoscope "
+            new TH1F(Form("h_hodo_time_GEM1_y_punchthrough_cut_dx%"
+                          "d_dy%d_%s_thread_%d",
+                          dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM1_y_punchthrough_cut_dx%"
+                          "d_dy%d_%s;Hodoscope "
                           "time (ns);Counts",
                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
                      lad_time.nbins, lad_time.min, lad_time.max);
@@ -1366,15 +1404,17 @@ void gem_tracking_by_clust() {
         hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM0_xy"][i_cut][i_plane][kSIG] =
             new TH1F(Form("h_hodo_time_GEM0_xy_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
                           plane_names[i_plane].c_str(), thread),
-                     Form("h_hodo_time_GEM0_xy_cut_dx%d_dy%d_%s;Hodoscope time (ns);Counts", dx_cuts[i_cut],
-                          dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                     Form("h_hodo_time_GEM0_xy_cut_dx%d_dy%d_%s;Hodoscope "
+                          "time (ns);Counts",
+                          dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
                      lad_time.nbins, lad_time.min, lad_time.max);
 
         hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM1_xy"][i_cut][i_plane][kSIG] =
             new TH1F(Form("h_hodo_time_GEM1_xy_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
                           plane_names[i_plane].c_str(), thread),
-                     Form("h_hodo_time_GEM1_xy_cut_dx%d_dy%d_%s;Hodoscope time (ns);Counts", dx_cuts[i_cut],
-                          dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                     Form("h_hodo_time_GEM1_xy_cut_dx%d_dy%d_%s;Hodoscope "
+                          "time (ns);Counts",
+                          dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
                      lad_time.nbins, lad_time.min, lad_time.max);
 
         hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM_all_x"][i_cut][i_plane][kSIG] =
@@ -1402,41 +1442,51 @@ void gem_tracking_by_clust() {
                      lad_time.nbins, lad_time.min, lad_time.max);
 
         hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM0_xy_punchthrough"][i_cut][i_plane][kSIG] =
-            new TH1F(Form("h_hodo_time_GEM0_xy_punchthrough_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
-                          plane_names[i_plane].c_str(), thread),
-                     Form("h_hodo_time_GEM0_xy_punchthrough_cut_dx%d_dy%d_%s;Hodoscope "
+            new TH1F(Form("h_hodo_time_GEM0_xy_punchthrough_cut_"
+                          "dx%d_dy%d_%s_thread_%d",
+                          dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM0_xy_punchthrough_cut_"
+                          "dx%d_dy%d_%s;Hodoscope "
                           "time (ns);Counts",
                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
                      lad_time.nbins, lad_time.min, lad_time.max);
 
         hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM1_xy_punchthrough"][i_cut][i_plane][kSIG] =
-            new TH1F(Form("h_hodo_time_GEM1_xy_punchthrough_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
-                          plane_names[i_plane].c_str(), thread),
-                     Form("h_hodo_time_GEM1_xy_punchthrough_cut_dx%d_dy%d_%s;Hodoscope "
+            new TH1F(Form("h_hodo_time_GEM1_xy_punchthrough_cut_"
+                          "dx%d_dy%d_%s_thread_%d",
+                          dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM1_xy_punchthrough_cut_"
+                          "dx%d_dy%d_%s;Hodoscope "
                           "time (ns);Counts",
                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
                      lad_time.nbins, lad_time.min, lad_time.max);
 
         hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM_all_x_punchthrough"][i_cut][i_plane][kSIG] =
-            new TH1F(Form("h_hodo_time_GEM_all_x_punchthrough_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut],
-                          dy_cuts[i_cut], plane_names[i_plane].c_str(), thread),
-                     Form("h_hodo_time_GEM_all_x_punchthrough_cut_dx%d_dy%d_%s;Hodoscope "
+            new TH1F(Form("h_hodo_time_GEM_all_x_punchthrough_cut_"
+                          "dx%d_dy%d_%s_thread_%d",
+                          dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM_all_x_punchthrough_cut_"
+                          "dx%d_dy%d_%s;Hodoscope "
                           "time (ns);Counts",
                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
                      lad_time.nbins, lad_time.min, lad_time.max);
 
         hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM_all_y_punchthrough"][i_cut][i_plane][kSIG] =
-            new TH1F(Form("h_hodo_time_GEM_all_y_punchthrough_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut],
-                          dy_cuts[i_cut], plane_names[i_plane].c_str(), thread),
-                     Form("h_hodo_time_GEM_all_y_punchthrough_cut_dx%d_dy%d_%s;Hodoscope "
+            new TH1F(Form("h_hodo_time_GEM_all_y_punchthrough_cut_"
+                          "dx%d_dy%d_%s_thread_%d",
+                          dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM_all_y_punchthrough_cut_"
+                          "dx%d_dy%d_%s;Hodoscope "
                           "time (ns);Counts",
                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
                      lad_time.nbins, lad_time.min, lad_time.max);
 
         hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM_all_xy_punchthrough"][i_cut][i_plane][kSIG] =
-            new TH1F(Form("h_hodo_time_GEM_all_xy_punchthrough_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut],
-                          dy_cuts[i_cut], plane_names[i_plane].c_str(), thread),
-                     Form("h_hodo_time_GEM_all_xy_punchthrough_cut_dx%d_dy%d_%s;Hodoscope "
+            new TH1F(Form("h_hodo_time_GEM_all_xy_punchthrough_"
+                          "cut_dx%d_dy%d_%s_thread_%d",
+                          dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM_all_xy_punchthrough_"
+                          "cut_dx%d_dy%d_%s;Hodoscope "
                           "time (ns);Counts",
                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
                      lad_time.nbins, lad_time.min, lad_time.max);
@@ -1447,89 +1497,109 @@ void gem_tracking_by_clust() {
           // ADC amplitude histograms
 
           hist_map_dxdy_cuts_vec[thread]["h_hodo_time_diff_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_hodo_time_diff_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_hodo_time_diff_punchthrough_cut_dx%d_dy%d_%s_%s;Hodoscope "
+              new TH1F(Form("h_hodo_time_diff_punchthrough_cut_dx%"
+                            "d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_hodo_time_diff_punchthrough_cut_dx%"
+                            "d_dy%d_%s_%s;Hodoscope "
                             "time Difference (ns) [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        time_diff.nbins, time_diff.min, time_diff.max);
 
           hist_map_dxdy_cuts_vec[thread]["h_hodo_time_diff_GEM0_x_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_hodo_time_diff_GEM0_x_punchthrough_cut_dx%d_dy%d_%s_%s_"
+              new TH1F(Form("h_hodo_time_diff_GEM0_x_punchthrough_cut_dx%d_dy%d_%s_%"
+                            "s_"
                             "thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_hodo_time_diff_GEM0_x_punchthrough_cut_dx%d_dy%d_%s_%s;"
+                       Form("h_hodo_time_diff_GEM0_x_punchthrough_cut_dx%d_dy%d_%s_%"
+                            "s;"
                             "Hodoscope time Difference (ns) [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        time_diff.nbins, time_diff.min, time_diff.max);
           hist_map_dxdy_cuts_vec[thread]["h_hodo_time_diff_GEM0_y_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_hodo_time_diff_GEM0_y_punchthrough_cut_dx%d_dy%d_%s_%s_"
+              new TH1F(Form("h_hodo_time_diff_GEM0_y_punchthrough_cut_dx%d_dy%d_%s_%"
+                            "s_"
                             "thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_hodo_time_diff_GEM0_y_punchthrough_cut_dx%d_dy%d_%s_%s;"
+                       Form("h_hodo_time_diff_GEM0_y_punchthrough_cut_dx%d_dy%d_%s_%"
+                            "s;"
                             "Hodoscope time Difference (ns) [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        time_diff.nbins, time_diff.min, time_diff.max);
 
           hist_map_dxdy_cuts_vec[thread]["h_hodo_time_diff_GEM1_x_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_hodo_time_diff_GEM1_x_punchthrough_cut_dx%d_dy%d_%s_%s_"
+              new TH1F(Form("h_hodo_time_diff_GEM1_x_punchthrough_cut_dx%d_dy%d_%s_%"
+                            "s_"
                             "thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_hodo_time_diff_GEM1_x_punchthrough_cut_dx%d_dy%d_%s_%s;"
+                       Form("h_hodo_time_diff_GEM1_x_punchthrough_cut_dx%d_dy%d_%s_%"
+                            "s;"
                             "Hodoscope time Difference (ns) [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        time_diff.nbins, time_diff.min, time_diff.max);
 
           hist_map_dxdy_cuts_vec[thread]["h_hodo_time_diff_GEM1_y_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_hodo_time_diff_GEM1_y_punchthrough_cut_dx%d_dy%d_%s_%s_"
+              new TH1F(Form("h_hodo_time_diff_GEM1_y_punchthrough_cut_dx%d_dy%d_%s_%"
+                            "s_"
                             "thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_hodo_time_diff_GEM1_y_punchthrough_cut_dx%d_dy%d_%s_%s;"
+                       Form("h_hodo_time_diff_GEM1_y_punchthrough_cut_dx%d_dy%d_%s_%"
+                            "s;"
                             "Hodoscope time Difference (ns) [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        time_diff.nbins, time_diff.min, time_diff.max);
 
           hist_map_dxdy_cuts_vec[thread]["h_hodo_time_diff_GEM0_xy_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_hodo_time_diff_GEM0_xy_punchthrough_cut_dx%d_dy%d_%s_%s_"
+              new TH1F(Form("h_hodo_time_diff_GEM0_xy_punchthrough_cut_dx%d_dy%d_%s_"
+                            "%s_"
                             "thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_hodo_time_diff_GEM0_xy_punchthrough_cut_dx%d_dy%d_%s_%s;"
+                       Form("h_hodo_time_diff_GEM0_xy_punchthrough_cut_dx%d_dy%d_%s_"
+                            "%s;"
                             "Hodoscope time Difference (ns) [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        time_diff.nbins, time_diff.min, time_diff.max);
 
           hist_map_dxdy_cuts_vec[thread]["h_hodo_time_diff_GEM1_xy_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_hodo_time_diff_GEM1_xy_punchthrough_cut_dx%d_dy%d_%s_%s_"
+              new TH1F(Form("h_hodo_time_diff_GEM1_xy_punchthrough_cut_dx%d_dy%d_%s_"
+                            "%s_"
                             "thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_hodo_time_diff_GEM1_xy_punchthrough_cut_dx%d_dy%d_%s_%s;"
+                       Form("h_hodo_time_diff_GEM1_xy_punchthrough_cut_dx%d_dy%d_%s_"
+                            "%s;"
                             "Hodoscope time Difference (ns) [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        time_diff.nbins, time_diff.min, time_diff.max);
 
           hist_map_dxdy_cuts_vec[thread]["h_hodo_time_diff_GEM_all_x_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_hodo_time_diff_GEM_all_x_punchthrough_cut_dx%d_dy%d_%s_%s_"
+              new TH1F(Form("h_hodo_time_diff_GEM_all_x_punchthrough_cut_dx%d_dy%d_%"
+                            "s_%s_"
                             "thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_hodo_time_diff_GEM_all_x_punchthrough_cut_dx%d_dy%d_%s_%s;"
+                       Form("h_hodo_time_diff_GEM_all_x_punchthrough_cut_dx%d_dy%d_%"
+                            "s_%s;"
                             "Hodoscope time Difference (ns) [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        time_diff.nbins, time_diff.min, time_diff.max);
 
           hist_map_dxdy_cuts_vec[thread]["h_hodo_time_diff_GEM_all_y_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_hodo_time_diff_GEM_all_y_punchthrough_cut_dx%d_dy%d_%s_%s_"
+              new TH1F(Form("h_hodo_time_diff_GEM_all_y_punchthrough_cut_dx%d_dy%d_%"
+                            "s_%s_"
                             "thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_hodo_time_diff_GEM_all_y_punchthrough_cut_dx%d_dy%d_%s_%s;"
+                       Form("h_hodo_time_diff_GEM_all_y_punchthrough_cut_dx%d_dy%d_%"
+                            "s_%s;"
                             "Hodoscope time Difference (ns) [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        time_diff.nbins, time_diff.min, time_diff.max);
 
           hist_map_dxdy_cuts_vec[thread]["h_hodo_time_diff_GEM_all_xy_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_hodo_time_diff_GEM_all_xy_punchthrough_cut_dx%d_dy%d_%s_%s_"
+              new TH1F(Form("h_hodo_time_diff_GEM_all_xy_punchthrough_cut_dx%d_dy%d_"
+                            "%s_%s_"
                             "thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_hodo_time_diff_GEM_all_xy_punchthrough_cut_dx%d_dy%d_%s_%s;"
+                       Form("h_hodo_time_diff_GEM_all_xy_punchthrough_cut_dx%d_dy%d_"
+                            "%s_%s;"
                             "Hodoscope time Difference (ns) [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        time_diff.nbins, time_diff.min, time_diff.max);
@@ -1538,14 +1608,17 @@ void gem_tracking_by_clust() {
           hist_map_dxdy_cuts_vec[thread]["h_hodo_adc_amp"][i_cut][i_plane][i_sigbkd] =
               new TH1D(Form("h_hodo_adc_amp_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
                             plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_hodo_adc_amp_cut_dx%d_dy%d_%s_%s;ADC Amplitude [%s];Counts", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       Form("h_hodo_adc_amp_cut_dx%d_dy%d_%s_%s;ADC Amplitude "
+                            "[%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        LAD_ADC.nbins, LAD_ADC.min, LAD_ADC.max);
 
           hist_map_dxdy_cuts_vec[thread]["h_hodo_adc_amp_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1D(Form("h_hodo_adc_amp_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
-                            plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_hodo_adc_amp_punchthrough_cut_dx%d_dy%d_%s_%s;ADC Amplitude "
+              new TH1D(Form("h_hodo_adc_amp_punchthrough_cut_dx%d_"
+                            "dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_hodo_adc_amp_punchthrough_cut_dx%d_"
+                            "dy%d_%s_%s;ADC Amplitude "
                             "[%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        LAD_ADC.nbins, LAD_ADC.min, LAD_ADC.max);
@@ -1623,374 +1696,470 @@ void gem_tracking_by_clust() {
                        LAD_ADC.nbins, LAD_ADC.min, LAD_ADC.max);
 
           hist_map_dxdy_cuts_vec[thread]["h_hodo_adc_amp_GEM_all_xy_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1D(Form("h_hodo_adc_amp_GEM_all_xy_punchthrough_cut_dx%d_dy%d_%s_%s_"
+              new TH1D(Form("h_hodo_adc_amp_GEM_all_xy_"
+                            "punchthrough_cut_dx%d_dy%d_%s_%s_"
                             "thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_hodo_adc_amp_GEM_all_xy_punchthrough_cut_dx%d_dy%d_%s_%s;ADC "
+                       Form("h_hodo_adc_amp_GEM_all_xy_"
+                            "punchthrough_cut_dx%d_dy%d_%s_%s;ADC "
                             "Amplitude [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        LAD_ADC.nbins, LAD_ADC.min, LAD_ADC.max);
 
           //////////////////////////////////////////////////////////////////
-          // GEM Conditional Efficiency histograms (1D for x and y, for both GEM0 and GEM1)
+          // GEM Conditional Efficiency histograms (1D for x and y, for both
+          // GEM0 and GEM1)
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM0_x"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_cond_efficiency_all_GEM0_x_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_gem_cond_efficiency_all_GEM0_x_cut_dx%d_dy%d_%s_%s;Cluster x "
+              new TH1F(Form("h_gem_cond_efficiency_all_GEM0_x_cut_"
+                            "dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_gem_cond_efficiency_all_GEM0_x_cut_"
+                            "dx%d_dy%d_%s_%s;Cluster x "
                             "[%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dx_NBINS, dx_min, dx_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM0_x"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM0_x_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_gem_cond_efficiency_good_hit_GEM0_x_cut_dx%d_dy%d_%s_%s;Cluster x "
+              new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM0_"
+                            "x_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_gem_cond_efficiency_good_hit_GEM0_"
+                            "x_cut_dx%d_dy%d_%s_%s;Cluster x "
                             "[%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dx_NBINS, dx_min, dx_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM0_y"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_cond_efficiency_all_GEM0_y_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_gem_cond_efficiency_all_GEM0_y_cut_dx%d_dy%d_%s_%s;Cluster y "
+              new TH1F(Form("h_gem_cond_efficiency_all_GEM0_y_cut_"
+                            "dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_gem_cond_efficiency_all_GEM0_y_cut_"
+                            "dx%d_dy%d_%s_%s;Cluster y "
                             "[%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM0_y"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM0_y_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_gem_cond_efficiency_good_hit_GEM0_y_cut_dx%d_dy%d_%s_%s;Cluster y "
+              new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM0_"
+                            "y_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_gem_cond_efficiency_good_hit_GEM0_"
+                            "y_cut_dx%d_dy%d_%s_%s;Cluster y "
                             "[%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dy_NBINS, dy_min, dy_max);
 
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM1_x"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_cond_efficiency_all_GEM1_x_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_gem_cond_efficiency_all_GEM1_x_cut_dx%d_dy%d_%s_%s;Cluster x "
+              new TH1F(Form("h_gem_cond_efficiency_all_GEM1_x_cut_"
+                            "dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_gem_cond_efficiency_all_GEM1_x_cut_"
+                            "dx%d_dy%d_%s_%s;Cluster x "
                             "[%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dx_NBINS, dx_min, dx_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM1_x"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM1_x_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_gem_cond_efficiency_good_hit_GEM1_x_cut_dx%d_dy%d_%s_%s;Cluster x "
+              new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM1_"
+                            "x_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_gem_cond_efficiency_good_hit_GEM1_"
+                            "x_cut_dx%d_dy%d_%s_%s;Cluster x "
                             "[%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dx_NBINS, dx_min, dx_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM1_y"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_cond_efficiency_all_GEM1_y_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_gem_cond_efficiency_all_GEM1_y_cut_dx%d_dy%d_%s_%s;Cluster y "
+              new TH1F(Form("h_gem_cond_efficiency_all_GEM1_y_cut_"
+                            "dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_gem_cond_efficiency_all_GEM1_y_cut_"
+                            "dx%d_dy%d_%s_%s;Cluster y "
                             "[%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM1_y"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM1_y_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_gem_cond_efficiency_good_hit_GEM1_y_cut_dx%d_dy%d_%s_%s;Cluster y "
+              new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM1_"
+                            "y_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_gem_cond_efficiency_good_hit_GEM1_"
+                            "y_cut_dx%d_dy%d_%s_%s;Cluster y "
                             "[%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM0_2D"][i_cut][i_plane][i_sigbkd] =
-              new TH2F(Form("h_gem_cond_efficiency_all_GEM0_2D_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM0 Conditional Efficiency All (x vs y) [%s];Golden Track x "
+              new TH2F(Form("h_gem_cond_efficiency_all_GEM0_2D_"
+                            "cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0 Conditional Efficiency All (x "
+                            "vs y) [%s];Golden Track x "
                             "(cm);Golden Track y (cm)",
                             sigbkd_str),
                        dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM0_2D"][i_cut][i_plane][i_sigbkd] =
-              new TH2F(Form("h_gem_cond_efficiency_good_hit_GEM0_2D_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM0 Conditional Efficiency Good Hit (x vs y) [%s];Golden Track x "
+              new TH2F(Form("h_gem_cond_efficiency_good_hit_GEM0_"
+                            "2D_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0 Conditional Efficiency Good Hit "
+                            "(x vs y) [%s];Golden Track x "
                             "(cm);Golden Track y (cm)",
                             sigbkd_str),
                        dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
 
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM1_2D"][i_cut][i_plane][i_sigbkd] =
-              new TH2F(Form("h_gem_cond_efficiency_all_GEM1_2D_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM1 Conditional Efficiency All (x vs y) [%s];Golden Track x "
+              new TH2F(Form("h_gem_cond_efficiency_all_GEM1_2D_"
+                            "cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1 Conditional Efficiency All (x "
+                            "vs y) [%s];Golden Track x "
                             "(cm);Golden Track y (cm)",
                             sigbkd_str),
                        dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM1_2D"][i_cut][i_plane][i_sigbkd] =
-              new TH2F(Form("h_gem_cond_efficiency_good_hit_GEM1_2D_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM1 Conditional Efficiency Good Hit (x vs y) [%s];Golden Track x "
+              new TH2F(Form("h_gem_cond_efficiency_good_hit_GEM1_"
+                            "2D_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1 Conditional Efficiency Good Hit "
+                            "(x vs y) [%s];Golden Track x "
                             "(cm);Golden Track y (cm)",
                             sigbkd_str),
                        dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
 
           // Punchthrough versions
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM0_x_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_cond_efficiency_all_GEM0_x_punchthrough_cut_dx%d_dy%d_%s_%s_"
+              new TH1F(Form("h_gem_cond_efficiency_all_GEM0_x_punchthrough_cut_dx%d_"
+                            "dy%d_%s_%s_"
                             "thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_gem_cond_efficiency_all_GEM0_x_punchthrough_cut_dx%d_dy%d_%s_%s;"
+                       Form("h_gem_cond_efficiency_all_GEM0_x_punchthrough_cut_dx%d_"
+                            "dy%d_%s_%s;"
                             "Cluster x [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dx_NBINS, dx_min, dx_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM0_x_punchthrough"][i_cut][i_plane]
-                                [i_sigbkd] =
-                                    new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM0_x_punchthrough_cut_dx%d_dy%d_%s_"
-                                                  "%s_thread_%d",
-                                                  dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
-                                                  sigbkd_str, thread),
-                                             Form("h_gem_cond_efficiency_good_hit_GEM0_x_punchthrough_cut_dx%d_dy%d_%s_"
-                                                  "%s;Cluster x [%s];Counts",
-                                                  dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
-                                                  sigbkd_str, sigbkd_str),
-                                             dx_NBINS, dx_min, dx_max);
+                                [i_sigbkd] = new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM0_x_punchthrough_cut_"
+                                                           "dx%d_dy%d_%s_"
+                                                           "%s_thread_%d",
+                                                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
+                                                           sigbkd_str, thread),
+                                                      Form("h_gem_cond_efficiency_good_hit_GEM0_x_punchthrough_cut_"
+                                                           "dx%d_dy%d_%s_"
+                                                           "%s;Cluster x [%s];Counts",
+                                                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
+                                                           sigbkd_str, sigbkd_str),
+                                                      dx_NBINS, dx_min, dx_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM0_y_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_cond_efficiency_all_GEM0_y_punchthrough_cut_dx%d_dy%d_%s_%s_"
+              new TH1F(Form("h_gem_cond_efficiency_all_GEM0_y_punchthrough_cut_dx%d_"
+                            "dy%d_%s_%s_"
                             "thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_gem_cond_efficiency_all_GEM0_y_punchthrough_cut_dx%d_dy%d_%s_%s;"
+                       Form("h_gem_cond_efficiency_all_GEM0_y_punchthrough_cut_dx%d_"
+                            "dy%d_%s_%s;"
                             "Cluster y [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM0_y_punchthrough"][i_cut][i_plane]
-                                [i_sigbkd] =
-                                    new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM0_y_punchthrough_cut_dx%d_dy%d_%s_"
-                                                  "%s_thread_%d",
-                                                  dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
-                                                  sigbkd_str, thread),
-                                             Form("h_gem_cond_efficiency_good_hit_GEM0_y_punchthrough_cut_dx%d_dy%d_%s_"
-                                                  "%s;Cluster y [%s];Counts",
-                                                  dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
-                                                  sigbkd_str, sigbkd_str),
-                                             dy_NBINS, dy_min, dy_max);
+                                [i_sigbkd] = new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM0_y_punchthrough_cut_"
+                                                           "dx%d_dy%d_%s_"
+                                                           "%s_thread_%d",
+                                                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
+                                                           sigbkd_str, thread),
+                                                      Form("h_gem_cond_efficiency_good_hit_GEM0_y_punchthrough_cut_"
+                                                           "dx%d_dy%d_%s_"
+                                                           "%s;Cluster y [%s];Counts",
+                                                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
+                                                           sigbkd_str, sigbkd_str),
+                                                      dy_NBINS, dy_min, dy_max);
 
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM1_x_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_cond_efficiency_all_GEM1_x_punchthrough_cut_dx%d_dy%d_%s_%s_"
+              new TH1F(Form("h_gem_cond_efficiency_all_GEM1_x_punchthrough_cut_dx%d_"
+                            "dy%d_%s_%s_"
                             "thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_gem_cond_efficiency_all_GEM1_x_punchthrough_cut_dx%d_dy%d_%s_%s;"
+                       Form("h_gem_cond_efficiency_all_GEM1_x_punchthrough_cut_dx%d_"
+                            "dy%d_%s_%s;"
                             "Cluster x [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dx_NBINS, dx_min, dx_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM1_x_punchthrough"][i_cut][i_plane]
-                                [i_sigbkd] =
-                                    new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM1_x_punchthrough_cut_dx%d_dy%d_%s_"
-                                                  "%s_thread_%d",
-                                                  dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
-                                                  sigbkd_str, thread),
-                                             Form("h_gem_cond_efficiency_good_hit_GEM1_x_punchthrough_cut_dx%d_dy%d_%s_"
-                                                  "%s;Cluster x [%s];Counts",
-                                                  dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
-                                                  sigbkd_str, sigbkd_str),
-                                             dx_NBINS, dx_min, dx_max);
+                                [i_sigbkd] = new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM1_x_punchthrough_cut_"
+                                                           "dx%d_dy%d_%s_"
+                                                           "%s_thread_%d",
+                                                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
+                                                           sigbkd_str, thread),
+                                                      Form("h_gem_cond_efficiency_good_hit_GEM1_x_punchthrough_cut_"
+                                                           "dx%d_dy%d_%s_"
+                                                           "%s;Cluster x [%s];Counts",
+                                                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
+                                                           sigbkd_str, sigbkd_str),
+                                                      dx_NBINS, dx_min, dx_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM1_y_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_cond_efficiency_all_GEM1_y_punchthrough_cut_dx%d_dy%d_%s_%s_"
+              new TH1F(Form("h_gem_cond_efficiency_all_GEM1_y_punchthrough_cut_dx%d_"
+                            "dy%d_%s_%s_"
                             "thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("h_gem_cond_efficiency_all_GEM1_y_punchthrough_cut_dx%d_dy%d_%s_%s;"
+                       Form("h_gem_cond_efficiency_all_GEM1_y_punchthrough_cut_dx%d_"
+                            "dy%d_%s_%s;"
                             "Cluster y [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM1_y_punchthrough"][i_cut][i_plane]
-                                [i_sigbkd] =
-                                    new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM1_y_punchthrough_cut_dx%d_dy%d_%s_"
-                                                  "%s_thread_%d",
-                                                  dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
-                                                  sigbkd_str, thread),
-                                             Form("h_gem_cond_efficiency_good_hit_GEM1_y_punchthrough_cut_dx%d_dy%d_%s_"
-                                                  "%s;Cluster y [%s];Counts",
-                                                  dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
-                                                  sigbkd_str, sigbkd_str),
-                                             dy_NBINS, dy_min, dy_max);
+                                [i_sigbkd] = new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM1_y_punchthrough_cut_"
+                                                           "dx%d_dy%d_%s_"
+                                                           "%s_thread_%d",
+                                                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
+                                                           sigbkd_str, thread),
+                                                      Form("h_gem_cond_efficiency_good_hit_GEM1_y_punchthrough_cut_"
+                                                           "dx%d_dy%d_%s_"
+                                                           "%s;Cluster y [%s];Counts",
+                                                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
+                                                           sigbkd_str, sigbkd_str),
+                                                      dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM0_2D_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH2F(Form("h_gem_cond_efficiency_all_GEM0_2D_punchthrough_cut_dx%d_dy%d_%s_%s_"
+              new TH2F(Form("h_gem_cond_efficiency_all_GEM0_2D_punchthrough_cut_dx%"
+                            "d_dy%d_%s_%s_"
                             "thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM0 Conditional Efficiency All Punchthrough (x vs y) [%s];Golden "
+                       Form("GEM0 Conditional Efficiency All Punchthrough (x vs y) "
+                            "[%s];Golden "
                             "Track x (cm);Golden Track y (cm)",
                             sigbkd_str),
                        dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM0_2D_punchthrough"][i_cut][i_plane]
-                                [i_sigbkd] =
-                                    new TH2F(Form("h_gem_cond_efficiency_good_hit_GEM0_2D_punchthrough_cut_dx%d_dy%d_%"
-                                                  "s_%s_thread_%d",
-                                                  dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
-                                                  sigbkd_str, thread),
-                                             Form("GEM0 Conditional Efficiency Good Hit Punchthrough (x vs y) "
-                                                  "[%s];Golden Track x (cm);Golden Track y (cm)",
-                                                  sigbkd_str),
-                                             dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
+                                [i_sigbkd] = new TH2F(Form("h_gem_cond_efficiency_good_hit_GEM0_2D_punchthrough_"
+                                                           "cut_dx%d_dy%d_%"
+                                                           "s_%s_thread_%d",
+                                                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
+                                                           sigbkd_str, thread),
+                                                      Form("GEM0 Conditional Efficiency Good Hit Punchthrough (x "
+                                                           "vs y) "
+                                                           "[%s];Golden Track x (cm);Golden Track y (cm)",
+                                                           sigbkd_str),
+                                                      dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM1_2D_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH2F(Form("h_gem_cond_efficiency_all_GEM1_2D_punchthrough_cut_dx%d_dy%d_%s_%s_"
+              new TH2F(Form("h_gem_cond_efficiency_all_GEM1_2D_punchthrough_cut_dx%"
+                            "d_dy%d_%s_%s_"
                             "thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM1 Conditional Efficiency All Punchthrough (x vs y) [%s];Golden "
+                       Form("GEM1 Conditional Efficiency All Punchthrough (x vs y) "
+                            "[%s];Golden "
                             "Track x (cm);Golden Track y (cm)",
                             sigbkd_str),
                        dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM1_2D_punchthrough"][i_cut][i_plane]
-                                [i_sigbkd] =
-                                    new TH2F(Form("h_gem_cond_efficiency_good_hit_GEM1_2D_punchthrough_cut_dx%d_dy%d_%"
-                                                  "s_%s_thread_%d",
-                                                  dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
-                                                  sigbkd_str, thread),
-                                             Form("GEM1 Conditional Efficiency Good Hit Punchthrough (x vs y) "
-                                                  "[%s];Golden Track x (cm);Golden Track y (cm)",
-                                                  sigbkd_str),
-                                             dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
+                                [i_sigbkd] = new TH2F(Form("h_gem_cond_efficiency_good_hit_GEM1_2D_punchthrough_"
+                                                           "cut_dx%d_dy%d_%"
+                                                           "s_%s_thread_%d",
+                                                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(),
+                                                           sigbkd_str, thread),
+                                                      Form("GEM1 Conditional Efficiency Good Hit Punchthrough (x "
+                                                           "vs y) "
+                                                           "[%s];Golden Track x (cm);Golden Track y (cm)",
+                                                           sigbkd_str),
+                                                      dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
 
           //////////////////////////////////////////////////////////////////
           // GEM Efficiency histograms (1D for x and y, for both GEM0 and GEM1)
-          // GEM Efficiency histograms (not conditional, full efficiency requiring only target vertex and hodoscope hit)
+          // GEM Efficiency histograms (not conditional, full efficiency
+          // requiring only target vertex and hodoscope hit)
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM0_x"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_efficiency_all_GEM0_x_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
-                            plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM0_x Efficiency All cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+              new TH1F(Form("h_gem_efficiency_all_GEM0_x_cut_dx%d_dy%d_%s_%s_thread_"
+                            "%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0_x Efficiency All cut_dx%d_dy%d_%s_%s;Cluster x "
+                            "[%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dx_NBINS, dx_min, dx_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM0_x"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_efficiency_good_hit_GEM0_x_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM0_x Efficiency Good Hit cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+              new TH1F(Form("h_gem_efficiency_good_hit_GEM0_x_cut_dx%d_dy%d_%s_%s_"
+                            "thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0_x Efficiency Good Hit cut_dx%d_dy%d_%s_%s;Cluster "
+                            "x [%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dx_NBINS, dx_min, dx_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM0_y"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_efficiency_all_GEM0_y_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
-                            plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM0_y Efficiency All cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+              new TH1F(Form("h_gem_efficiency_all_GEM0_y_cut_dx%d_dy%d_%s_%s_thread_"
+                            "%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0_y Efficiency All cut_dx%d_dy%d_%s_%s;Cluster y "
+                            "[%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM0_y"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_efficiency_good_hit_GEM0_y_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM0_y Efficiency Good Hit cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+              new TH1F(Form("h_gem_efficiency_good_hit_GEM0_y_cut_dx%d_dy%d_%s_%s_"
+                            "thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0_y Efficiency Good Hit cut_dx%d_dy%d_%s_%s;Cluster "
+                            "y [%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dy_NBINS, dy_min, dy_max);
 
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM1_x"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_efficiency_all_GEM1_x_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
-                            plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM1_x Efficiency All cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+              new TH1F(Form("h_gem_efficiency_all_GEM1_x_cut_dx%d_dy%d_%s_%s_thread_"
+                            "%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1_x Efficiency All cut_dx%d_dy%d_%s_%s;Cluster x "
+                            "[%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dx_NBINS, dx_min, dx_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM1_x"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_efficiency_good_hit_GEM1_x_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM1_x Efficiency Good Hit cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+              new TH1F(Form("h_gem_efficiency_good_hit_GEM1_x_cut_dx%d_dy%d_%s_%s_"
+                            "thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1_x Efficiency Good Hit cut_dx%d_dy%d_%s_%s;Cluster "
+                            "x [%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dx_NBINS, dx_min, dx_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM1_y"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_efficiency_all_GEM1_y_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
-                            plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM1_y Efficiency All cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+              new TH1F(Form("h_gem_efficiency_all_GEM1_y_cut_dx%d_dy%d_%s_%s_thread_"
+                            "%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1_y Efficiency All cut_dx%d_dy%d_%s_%s;Cluster y "
+                            "[%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM1_y"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_efficiency_good_hit_GEM1_y_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM1_y Efficiency Good Hit cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+              new TH1F(Form("h_gem_efficiency_good_hit_GEM1_y_cut_dx%d_dy%d_%s_%s_"
+                            "thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1_y Efficiency Good Hit cut_dx%d_dy%d_%s_%s;Cluster "
+                            "y [%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dy_NBINS, dy_min, dy_max);
 
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM0_2D"][i_cut][i_plane][i_sigbkd] =
-              new TH2F(Form("h_gem_efficiency_all_GEM0_2D_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM0 Efficiency All (x vs y) cut_dx%d_dy%d_%s_%s;Golden Track x (cm);Golden Track y (cm)",
+              new TH2F(Form("h_gem_efficiency_all_GEM0_2D_cut_dx%d_dy%d_%s_%s_"
+                            "thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0 Efficiency All (x vs y) cut_dx%d_dy%d_%s_%s;Golden "
+                            "Track x (cm);Golden Track y (cm)",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
                        dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
-          hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM0_2D"][i_cut][i_plane][i_sigbkd] = new TH2F(
-              Form("h_gem_efficiency_good_hit_GEM0_2D_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
-                   plane_names[i_plane].c_str(), sigbkd_str, thread),
-              Form("GEM0 Efficiency Good Hit (x vs y) cut_dx%d_dy%d_%s_%s;Golden Track x (cm);Golden Track y (cm)",
-                   dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
-              dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM0_2D"][i_cut][i_plane][i_sigbkd] =
+              new TH2F(Form("h_gem_efficiency_good_hit_GEM0_2D_"
+                            "cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0 Efficiency Good Hit (x vs y) "
+                            "cut_dx%d_dy%d_%s_%s;Golden Track x "
+                            "(cm);Golden Track y (cm)",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
+                       dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
 
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM1_2D"][i_cut][i_plane][i_sigbkd] =
-              new TH2F(Form("h_gem_efficiency_all_GEM1_2D_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM1 Efficiency All (x vs y) cut_dx%d_dy%d_%s_%s;Golden Track x (cm);Golden Track y (cm)",
+              new TH2F(Form("h_gem_efficiency_all_GEM1_2D_cut_dx%d_dy%d_%s_%s_"
+                            "thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1 Efficiency All (x vs y) cut_dx%d_dy%d_%s_%s;Golden "
+                            "Track x (cm);Golden Track y (cm)",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
                        dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
-          hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM1_2D"][i_cut][i_plane][i_sigbkd] = new TH2F(
-              Form("h_gem_efficiency_good_hit_GEM1_2D_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
-                   plane_names[i_plane].c_str(), sigbkd_str, thread),
-              Form("GEM1 Efficiency Good Hit (x vs y) cut_dx%d_dy%d_%s_%s;Golden Track x (cm);Golden Track y (cm)",
-                   dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
-              dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM1_2D"][i_cut][i_plane][i_sigbkd] =
+              new TH2F(Form("h_gem_efficiency_good_hit_GEM1_2D_"
+                            "cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1 Efficiency Good Hit (x vs y) "
+                            "cut_dx%d_dy%d_%s_%s;Golden Track x "
+                            "(cm);Golden Track y (cm)",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
+                       dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
 
           // Punchthrough versions
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM0_x_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_efficiency_all_GEM0_x_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM0_x Efficiency All Punchthrough cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts",
+              new TH1F(Form("h_gem_efficiency_all_GEM0_x_punchthrough_cut_dx%d_dy%d_"
+                            "%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0_x Efficiency All Punchthrough "
+                            "cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dx_NBINS, dx_min, dx_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM0_x_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_efficiency_good_hit_GEM0_x_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d",
+              new TH1F(Form("h_gem_efficiency_good_hit_GEM0_x_punchthrough_cut_dx%d_"
+                            "dy%d_%s_%s_thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM0_x Efficiency Good Hit Punchthrough cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts",
+                       Form("GEM0_x Efficiency Good Hit Punchthrough "
+                            "cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dx_NBINS, dx_min, dx_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM0_y_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_efficiency_all_GEM0_y_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM0_y Efficiency All Punchthrough cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts",
+              new TH1F(Form("h_gem_efficiency_all_GEM0_y_punchthrough_cut_dx%d_dy%d_"
+                            "%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0_y Efficiency All Punchthrough "
+                            "cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM0_y_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_efficiency_good_hit_GEM0_y_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d",
+              new TH1F(Form("h_gem_efficiency_good_hit_GEM0_y_punchthrough_cut_dx%d_"
+                            "dy%d_%s_%s_thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM0_y Efficiency Good Hit Punchthrough cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts",
+                       Form("GEM0_y Efficiency Good Hit Punchthrough "
+                            "cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dy_NBINS, dy_min, dy_max);
 
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM1_x_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_efficiency_all_GEM1_x_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM1_x Efficiency All Punchthrough cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts",
+              new TH1F(Form("h_gem_efficiency_all_GEM1_x_punchthrough_cut_dx%d_dy%d_"
+                            "%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1_x Efficiency All Punchthrough "
+                            "cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dx_NBINS, dx_min, dx_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM1_x_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_efficiency_good_hit_GEM1_x_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d",
+              new TH1F(Form("h_gem_efficiency_good_hit_GEM1_x_punchthrough_cut_dx%d_"
+                            "dy%d_%s_%s_thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM1_x Efficiency Good Hit Punchthrough cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts",
+                       Form("GEM1_x Efficiency Good Hit Punchthrough "
+                            "cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dx_NBINS, dx_min, dx_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM1_y_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_efficiency_all_GEM1_y_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM1_y Efficiency All Punchthrough cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts",
+              new TH1F(Form("h_gem_efficiency_all_GEM1_y_punchthrough_cut_dx%d_dy%d_"
+                            "%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1_y Efficiency All Punchthrough "
+                            "cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM1_y_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH1F(Form("h_gem_efficiency_good_hit_GEM1_y_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d",
+              new TH1F(Form("h_gem_efficiency_good_hit_GEM1_y_punchthrough_cut_dx%d_"
+                            "dy%d_%s_%s_thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM1_y Efficiency Good Hit Punchthrough cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts",
+                       Form("GEM1_y Efficiency Good Hit Punchthrough "
+                            "cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        dy_NBINS, dy_min, dy_max);
 
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM0_2D_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH2F(Form("h_gem_efficiency_all_GEM0_2D_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM0 Efficiency All Punchthrough (x vs y) cut_dx%d_dy%d_%s_%s;Golden Track x (cm);Golden "
+              new TH2F(Form("h_gem_efficiency_all_GEM0_2D_punchthrough_cut_dx%d_dy%"
+                            "d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0 Efficiency All Punchthrough (x vs y) "
+                            "cut_dx%d_dy%d_%s_%s;Golden Track x (cm);Golden "
                             "Track y (cm)",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
                        dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM0_2D_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH2F(Form("h_gem_efficiency_good_hit_GEM0_2D_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d",
+              new TH2F(Form("h_gem_efficiency_good_hit_GEM0_2D_punchthrough_cut_dx%"
+                            "d_dy%d_%s_%s_thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM0 Efficiency Good Hit Punchthrough (x vs y) cut_dx%d_dy%d_%s_%s;Golden Track x "
+                       Form("GEM0 Efficiency Good Hit Punchthrough (x vs y) "
+                            "cut_dx%d_dy%d_%s_%s;Golden Track x "
                             "(cm);Golden Track y (cm)",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
                        dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
 
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM1_2D_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH2F(Form("h_gem_efficiency_all_GEM1_2D_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
-                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM1 Efficiency All Punchthrough (x vs y) cut_dx%d_dy%d_%s_%s;Golden Track x (cm);Golden "
+              new TH2F(Form("h_gem_efficiency_all_GEM1_2D_punchthrough_cut_dx%d_dy%"
+                            "d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1 Efficiency All Punchthrough (x vs y) "
+                            "cut_dx%d_dy%d_%s_%s;Golden Track x (cm);Golden "
                             "Track y (cm)",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
                        dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
           hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM1_2D_punchthrough"][i_cut][i_plane][i_sigbkd] =
-              new TH2F(Form("h_gem_efficiency_good_hit_GEM1_2D_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d",
+              new TH2F(Form("h_gem_efficiency_good_hit_GEM1_2D_punchthrough_cut_dx%"
+                            "d_dy%d_%s_%s_thread_%d",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
-                       Form("GEM1 Efficiency Good Hit Punchthrough (x vs y) cut_dx%d_dy%d_%s_%s;Golden Track x "
+                       Form("GEM1 Efficiency Good Hit Punchthrough (x vs y) "
+                            "cut_dx%d_dy%d_%s_%s;Golden Track x "
                             "(cm);Golden Track y (cm)",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
                        dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
@@ -2368,58 +2537,98 @@ void gem_tracking_by_clust() {
           Form("time/%s/cut_dx%d_dy%d/Diff_Times_BkdSub", plane_names[i_plane].c_str(), dx_cuts[i_cut], dy_cuts[i_cut]);
       string noSubDir =
           Form("time/%s/cut_dx%d_dy%d/Diff_Times", plane_names[i_plane].c_str(), dx_cuts[i_cut], dy_cuts[i_cut]);
-      double bkdSub_scale = (time_window_sig.max - time_window_sig.min) / (time_window_bkd.max - time_window_bkd.min);
+      double bkdSub_scale_init =
+          (time_window_sig.max - time_window_sig.min) / (time_window_bkd.max - time_window_bkd.min);
 
-      drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_time_diff_punchthrough"][i_cut][i_plane], bkdSub_scale,
-                           Form("hodo_time_diff_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_time_diff_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+      drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_time_diff_punchthrough"][i_cut][i_plane],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_time_diff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_time_diff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_time_diff_GEM0_x_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_time_diff_GEM0_x_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_time_diff_GEM0_x_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_x_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_time_diff_GEM0_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_time_diff_GEM0_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_time_diff_GEM0_y_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_time_diff_GEM0_y_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_time_diff_GEM0_y_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_diff_GEM0_y_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_time_diff_GEM0_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_time_diff_GEM0_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_time_diff_GEM1_x_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_time_diff_GEM1_x_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_time_diff_GEM1_x_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_x_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_time_diff_GEM1_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_time_diff_GEM1_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_time_diff_GEM1_y_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_time_diff_GEM1_y_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_time_diff_GEM1_y_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_y_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_time_diff_GEM1_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_time_diff_GEM1_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_time_diff_GEM0_xy_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_time_diff_GEM0_xy_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_time_diff_GEM0_xy_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_xy_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_time_diff_GEM0_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_time_diff_GEM0_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_time_diff_GEM1_xy_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_time_diff_GEM1_xy_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_time_diff_GEM1_xy_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_xy_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_time_diff_GEM1_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_time_diff_GEM1_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_time_diff_GEM_all_x_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_time_diff_GEM_all_x_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_time_diff_GEM_all_x_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_x_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_time_diff_GEM_all_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut],
+                                dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                           Form("hodo_time_diff_GEM_all_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut],
+                                dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_time_diff_GEM_all_y_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_time_diff_GEM_all_y_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_time_diff_GEM_all_y_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_y_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_time_diff_GEM_all_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut],
+                                dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                           Form("hodo_time_diff_GEM_all_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut],
+                                dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_time_diff_GEM_all_xy_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_time_diff_GEM_all_xy_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_time_diff_GEM_all_xy_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_xy_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_time_diff_GEM_all_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut],
+                                dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                           Form("hodo_time_diff_GEM_all_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut],
+                                dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       outputFile->cd(
           Form("time/%s/cut_dx%d_dy%d/ADC_Amp", plane_names[i_plane].c_str(), dx_cuts[i_cut], dy_cuts[i_cut]));
@@ -2428,55 +2637,94 @@ void gem_tracking_by_clust() {
       noSubDir = Form("time/%s/cut_dx%d_dy%d/ADC_Amp", plane_names[i_plane].c_str(), dx_cuts[i_cut], dy_cuts[i_cut]);
       // Draw ADC amplitude histograms: good_hit / all for GEM0_x, GEM0_y,
       // GEM1_x, GEM1_y
-      drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_punchthrough"][i_cut][i_plane], bkdSub_scale,
-                           Form("hodo_adc_amp_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_adc_amp_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+      drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_punchthrough"][i_cut][i_plane],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_adc_amp_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_adc_amp_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_GEM0_x_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_adc_amp_GEM0_x_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_adc_amp_GEM0_x_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_x_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_adc_amp_GEM0_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_adc_amp_GEM0_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_GEM0_y_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_adc_amp_GEM0_y_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_adc_amp_GEM0_y_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_y_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_adc_amp_GEM0_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_adc_amp_GEM0_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_GEM1_x_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_adc_amp_GEM1_x_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_adc_amp_GEM1_x_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_x_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_adc_amp_GEM1_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_adc_amp_GEM1_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_GEM1_y_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_adc_amp_GEM1_y_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_adc_amp_GEM1_y_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_y_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_adc_amp_GEM1_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_adc_amp_GEM1_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_GEM0_xy_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_adc_amp_GEM0_xy_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_adc_amp_GEM0_xy_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_xy_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_adc_amp_GEM0_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_adc_amp_GEM0_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_GEM1_xy_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_adc_amp_GEM1_xy_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_adc_amp_GEM1_xy_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_xy_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_adc_amp_GEM1_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_adc_amp_GEM1_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_GEM_all_x_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_adc_amp_GEM_all_x_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_adc_amp_GEM_all_x_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_x_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_adc_amp_GEM_all_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_adc_amp_GEM_all_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_GEM_all_y_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_adc_amp_GEM_all_y_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_adc_amp_GEM_all_y_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_y_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_adc_amp_GEM_all_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_adc_amp_GEM_all_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_GEM_all_xy_punchthrough"][i_cut][i_plane],
-                           bkdSub_scale,
-                           Form("hodo_adc_amp_GEM_all_xy_punchthrough_%s_cut_dx%d_dy%d", plane_names[i_plane].c_str(),
-                                dx_cuts[i_cut], dy_cuts[i_cut]),
-                           "hodo_adc_amp_GEM_all_xy_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_xy_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("hodo_adc_amp_GEM_all_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("hodo_adc_amp_GEM_all_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       bkdSubDir = Form("GEM_cond_Efficiency_BkdSub/%s/cut_dx%d_dy%d", plane_names[i_plane].c_str(), dx_cuts[i_cut],
                        dy_cuts[i_cut]);
@@ -2494,101 +2742,155 @@ void gem_tracking_by_clust() {
       // all
 
       // GEM0_x
-      drawEfficiencyHistograms(hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM0_x"][i_cut][i_plane],
-                               hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM0_x"][i_cut][i_plane],
-                               bkdSub_scale,
-                               Form("GEM0_x Conditional Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
-                                    plane_names[i_plane].c_str()),
-                               "GEM0_x", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM0_x"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM0_x"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_x"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_x"][i_cut][i_plane][kSIG],
+          Form("GEM0_x Conditional Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM0_x_cond_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM0_y
-      drawEfficiencyHistograms(hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM0_y"][i_cut][i_plane],
-                               hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM0_y"][i_cut][i_plane],
-                               bkdSub_scale,
-                               Form("GEM0_y Conditional Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
-                                    plane_names[i_plane].c_str()),
-                               "GEM0_y", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM0_y"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM0_y"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_y"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_y"][i_cut][i_plane][kSIG],
+          Form("GEM0_y Conditional Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM0_y_cond_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM1_x
-      drawEfficiencyHistograms(hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM1_x"][i_cut][i_plane],
-                               hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM1_x"][i_cut][i_plane],
-                               bkdSub_scale,
-                               Form("GEM1_x Conditional Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
-                                    plane_names[i_plane].c_str()),
-                               "GEM1_x", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM1_x"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM1_x"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_x"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_x"][i_cut][i_plane][kSIG],
+          Form("GEM1_x Conditional Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM1_x_cond_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM1_y
-      drawEfficiencyHistograms(hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM1_y"][i_cut][i_plane],
-                               hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM1_y"][i_cut][i_plane],
-                               bkdSub_scale,
-                               Form("GEM1_y Conditional Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
-                                    plane_names[i_plane].c_str()),
-                               "GEM1_y", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM1_y"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM1_y"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_y"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_y"][i_cut][i_plane][kSIG],
+          Form("GEM1_y Conditional Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM1_y_cond_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM0_2D
-      drawEfficiencyHistograms(hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM0_2D"][i_cut][i_plane],
-                               hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM0_2D"][i_cut][i_plane],
-                               bkdSub_scale,
-                               Form("GEM0_2D Conditional Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
-                                    plane_names[i_plane].c_str()),
-                               "GEM0_2D", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM0_2D"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM0_2D"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_xy"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_xy"][i_cut][i_plane][kSIG],
+          Form("GEM0_2D Conditional Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM0_2D_cond_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM1_2D
-      drawEfficiencyHistograms(hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM1_2D"][i_cut][i_plane],
-                               hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM1_2D"][i_cut][i_plane],
-                               bkdSub_scale,
-                               Form("GEM1_2D Conditional Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
-                                    plane_names[i_plane].c_str()),
-                               "GEM1_2D", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM1_2D"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM1_2D"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_xy"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_xy"][i_cut][i_plane][kSIG],
+          Form("GEM1_2D Conditional Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM1_2D_cond_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // Punchthrough versions
       // GEM0_x
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM0_x_punchthrough"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM0_x_punchthrough"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM0_x_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_x_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_x_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM0_x Conditional Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
-          "GEM0_x_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM0_x_cond_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM0_y
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM0_y_punchthrough"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM0_y_punchthrough"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM0_y_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_y_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_y_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM0_y Conditional Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
-          "GEM0_y_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM0_y_cond_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM1_x
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM1_x_punchthrough"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM1_x_punchthrough"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM1_x_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_x_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_x_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM1_x Conditional Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
-          "GEM1_x_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM1_x_cond_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM1_y
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM1_y_punchthrough"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM1_y_punchthrough"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM1_y_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_y_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_y_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM1_y Conditional Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
-          "GEM1_y_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM1_y_cond_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM0 2D punchthrough
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM0_2D_punchthrough"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM0_2D_punchthrough"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM0_2D_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_xy_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_xy_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM0 2D Conditional Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
-          "GEM0_2D_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM0_2D_cond_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM1 2D punchthrough
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM1_2D_punchthrough"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM1_2D_punchthrough"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM1_2D_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_xy_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_xy_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM1 2D Conditional Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
-          "GEM1_2D_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM1_2D_cond_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       //////////////////////////////////////////////////////////
       // Non-conditional GEM efficiency histograms
@@ -2605,93 +2907,147 @@ void gem_tracking_by_clust() {
       // GEM0_x
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM0_x"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_x"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_x"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_x"][i_cut][i_plane][kSIG],
           Form("GEM0_x Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
-          "GEM0_x_eff", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM0_x_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()), outputFile,
+          noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM0_y
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM0_y"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_y"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_y"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_y"][i_cut][i_plane][kSIG],
           Form("GEM0_y Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
-          "GEM0_y_eff", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM0_y_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()), outputFile,
+          noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM1_x
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM1_x"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_x"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_x"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_x"][i_cut][i_plane][kSIG],
           Form("GEM1_x Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
-          "GEM1_x_eff", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM1_x_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()), outputFile,
+          noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM1_y
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM1_y"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_y"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_y"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_y"][i_cut][i_plane][kSIG],
           Form("GEM1_y Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
-          "GEM1_y_eff", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM1_y_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()), outputFile,
+          noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM0 2D
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM0_2D"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_2D"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_2D"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_xy"][i_cut][i_plane][kSIG],
           Form("GEM0_2D Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
-          "GEM0_2D_eff", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM0_2D_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM1 2D
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM1_2D"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_2D"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_2D"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_xy"][i_cut][i_plane][kSIG],
           Form("GEM1_2D Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
-          "GEM1_2D_eff", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM1_2D_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // Punchthrough versions
       // GEM0_x
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM0_x_punchthrough"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_x_punchthrough"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_x_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_x_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM0_x Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
-          "GEM0_x_eff_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM0_x_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM0_y
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM0_y_punchthrough"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_y_punchthrough"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_y_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_y_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM0_y Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
-          "GEM0_y_eff_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM0_y_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM1_x
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM1_x_punchthrough"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_x_punchthrough"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_x_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_x_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM1_x Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
-          "GEM1_x_eff_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM1_x_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM1_y
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM1_y_punchthrough"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_y_punchthrough"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_y_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_y_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM1_y Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
-          "GEM1_y_eff_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM1_y_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM0 2D punchthrough
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM0_2D_punchthrough"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_2D_punchthrough"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_2D_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_xy_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM0 2D Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
-          "GEM0_2D_eff_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM0_2D_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       // GEM1 2D punchthrough
       drawEfficiencyHistograms(
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM1_2D_punchthrough"][i_cut][i_plane],
-          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_2D_punchthrough"][i_cut][i_plane], bkdSub_scale,
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_2D_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_xy_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM1 2D Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
-          "GEM1_2D_eff_punchthrough", outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+          Form("GEM1_2D_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
     }
   }
 
