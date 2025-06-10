@@ -56,6 +56,7 @@ const hist_range time_window_bkd(1800, 1975, 100);
 int run_number = 300000;
 
 const int MAX_DATA                = 10000;
+const int MAX_DATA_LAD            = 50;
 const int maxTracks               = 30;
 const int nPlanes                 = 5;
 const string plane_names[nPlanes] = {"000", "001", "100", "101", "200"};
@@ -87,12 +88,14 @@ double gem_r[2]  = {77.571, 95.571}; // Radius of the GEM's
 double gem_dx[2] = {0.0, 0.0};       // GEM dx offsets
 double gem_dy[2] = {0.0, 0.0};       // GEM dy offsets
 
+const double janky_diff_time_calib[2][nPaddles] = {{-0.25, 0.4, -1.6, 0.5, 0.7, -1.5, 0, 0.6, 0.3, 1, 0.7},
+                                                   {1.1, 0.2, -0.1, -0.4, -0.9, 2, -0.7, -0.2, 0.25, 2, -0.3}};
+
 template <typename T> double getBkdSubFactor(T *h_time_all, T *h_time_sig) {
   double bkdSub_scale = 1.0; // Default scale factor for background subtraction
   if (h_time_all == h_time_sig) {
-    return 1.0; // No background subtraction if the same time is used for all hits
+    return 0; // No background subtraction if the same time is used for all hits
   } else {
-    //     bkdSub_scale = getBkdSubFactor(h_time_all, h_time_denom, name, title);
     double D =
         h_time_all->Integral(h_time_all->FindBin(time_window_sig.min), h_time_all->FindBin(time_window_sig.max) - 1);
     double C =
@@ -295,15 +298,17 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
   Double_t trk_t[MAX_DATA], trk_dt[MAX_DATA];
   Double_t trk_x[2][MAX_DATA], trk_y[2][MAX_DATA], trk_z[2][MAX_DATA];
   Double_t trk_x_local[2][MAX_DATA], trk_y_local[2][MAX_DATA];
-  Double_t tdc_time_btm[nPlanes][MAX_DATA], tdc_time_top[nPlanes][MAX_DATA];
-  Double_t tdc_counter_btm[nPlanes][MAX_DATA], tdc_counter_top[nPlanes][MAX_DATA];
+  //LAD
+  Double_t tdc_time_btm[nPlanes][MAX_DATA_LAD], tdc_time_top[nPlanes][MAX_DATA_LAD];
+  Double_t tdc_counter_btm[nPlanes][MAX_DATA_LAD], tdc_counter_top[nPlanes][MAX_DATA_LAD];
   Int_t nTracks, nTdcTopHits[nPlanes], nTdcBtmHits[nPlanes];
   Double_t vertex_x, vertex_y, vertex_z;
 
-  Double_t time_avg[nPlanes][MAX_DATA], time_avg_paddle[nPlanes][MAX_DATA], time_avg_ypos[nPlanes][MAX_DATA],
-      adc_amp_avg[nPlanes][MAX_DATA];
+  Double_t time_avg[nPlanes][MAX_DATA_LAD], time_avg_paddle[nPlanes][MAX_DATA_LAD], time_avg_ypos[nPlanes][MAX_DATA_LAD],
+      adc_amp_avg[nPlanes][MAX_DATA_LAD];
   Int_t nData_hodo[nPlanes];
 
+  T->SetBranchStatus("*", 0);
   T->SetBranchAddress(Form("Ndata.%c.gem.clust.pos", spect_prefix), &nData_clust);
   T->SetBranchAddress(Form("%c.gem.clust.pos", spect_prefix), &clust_pos);
   T->SetBranchAddress(Form("%c.gem.clust.layer", spect_prefix), &clust_layer);
@@ -352,7 +357,7 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
   }
   //////////////////////////////////////////////////////////
   // Loop over the entries in the chunk
-  Double_t hodo_hit_time_punchthrough[nPlanes][nPaddles], hodo_hit_adc_punchthrough[nPlanes][nPaddles];
+  Int_t hodo_hit_punchthrough_idx[nPlanes][MAX_DATA_LAD];
   TVector3 p1[2], p2[2], p3[2];
   for (int i = 0; i < 2; ++i) {
     double theta = gem_theta;
@@ -370,20 +375,55 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
     }
     /////////////////////////////////////////////////////////
     // Check for matching hits in the hodoscope
-    for (int i_plane = 0; i_plane < nPlanes; ++i_plane) {
-      for (int i_paddle = 0; i_paddle < nPaddles; ++i_paddle) {
-        hodo_hit_time_punchthrough[i_plane][i_paddle] = -999;
-        hodo_hit_adc_punchthrough[i_plane][i_paddle]  = -999;
-      }
-    }
+    //     for (int i_plane = 0; i_plane < nPlanes; ++i_plane) {
+    //       for (int i_paddle = 0; i_paddle < nPaddles; ++i_paddle) {
+    //         hodo_hit_time_punchthrough[i_plane][i_paddle] = -999;
+    //         hodo_hit_adc_punchthrough[i_plane][i_paddle]  = -999;
+    //       }
+    //     }
 
     for (int plane = 0; plane < nPlanes; ++plane) {
+      int matching_plane;
+      switch (plane) {
+      case 0:
+        matching_plane = 1;
+        break;
+      case 1:
+        matching_plane = 0;
+        break;
+      case 2:
+        matching_plane = 3;
+        break;
+      case 3:
+        matching_plane = 2;
+        break;
+      case 4:
+        matching_plane = 4;
+        break;
+      }
       for (int i_hit = 0; i_hit < nData_hodo[plane]; ++i_hit) {
         int bar = int(time_avg_paddle[plane][i_hit]) - 1;
         if (bar < 0 || bar >= nPaddles)
           continue; // Skip invalid bars
-        hodo_hit_time_punchthrough[plane][bar] = time_avg[plane][i_hit];
-        hodo_hit_adc_punchthrough[plane][bar]  = adc_amp_avg[plane][i_hit];
+        // Loop through matching plane
+        int min_diff_time = 9999;
+        int min_diff_idx  = 9999;
+        for (int j_hit = 0; j_hit < nData_hodo[matching_plane]; ++j_hit) {
+          int j_bar = int(time_avg_paddle[matching_plane][j_hit]) - 1;
+          if (j_bar != bar || j_bar < 0 || j_bar >= nPaddles)
+            continue; // Skip invalid bars
+          double diff_time = time_avg[matching_plane][j_hit] - time_avg[plane][i_hit];
+          if (fabs(diff_time) < min_diff_time) {
+            min_diff_time = fabs(diff_time);
+            min_diff_idx  = j_hit;
+          }
+        }
+        if (min_diff_idx < 9999) {
+          hodo_hit_punchthrough_idx[plane][bar] =
+              min_diff_idx; // Store the index of the matching hit in the punchthrough array
+        } else {
+          hodo_hit_punchthrough_idx[plane][bar] = -999;
+        }
       }
     }
     ////////////////////////////////////////////////////////
@@ -412,11 +452,32 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
         TVector3 hodo_pos = GetHodoHitPosition(paddle, i_plane);
         hodo_pos.SetY(time_avg_ypos[i_plane][i_hit]);
 
-        bool is_punchthrough = (hodo_hit_time_punchthrough[matching_plane][paddle] != -999);
-        double diff_time =
-            hodo_hit_time_punchthrough[matching_plane][paddle] - hodo_hit_time_punchthrough[i_plane][paddle];
+        bool is_punchthrough = (hodo_hit_punchthrough_idx[matching_plane][paddle] != -999);
+        double diff_time;
+        if (is_punchthrough) {
+          diff_time =
+              time_avg[matching_plane][hodo_hit_punchthrough_idx[matching_plane][paddle]] - time_avg[i_plane][i_hit];
+          if (fabs(diff_time) > 10)
+            is_punchthrough = false; // Ignore very small time differences
+        } else {
+          diff_time = -999; // No punchthrough hit found
+        }
         if (matching_plane < i_plane) {
           diff_time = -diff_time; // Adjust the time difference based on the plane order
+        }
+        if (i_plane / 2 < 2)
+          diff_time += janky_diff_time_calib[i_plane / 2][paddle];
+        double pt1[2] = {3, 220};
+        double pt2[2] = {6, 0};
+        double m      = (pt2[1] - pt1[1]) / (pt2[0] - pt1[0]);
+        double b      = pt1[1] - m * pt1[0];
+        // FIXME: This works, but could be made prettier
+        bool is_proton = false;
+        if (fabs(diff_time) < 10) {
+          double hodo_hit_adc_match = adc_amp_avg[i_plane][hodo_hit_punchthrough_idx[i_plane][paddle]];
+          is_proton                 = adc_amp_avg[i_plane][i_hit] > (m * diff_time + b);
+          if (i_plane < matching_plane)
+            is_proton = adc_amp_avg[matching_plane][hodo_hit_punchthrough_idx[i_plane][paddle]] > (m * diff_time + b);
         }
 
         int time_id;
@@ -586,6 +647,11 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
             hist_map_dxdy_cuts["h_hodo_time_diff_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(diff_time);
             hist_map_dxdy_cuts["h_hodo_adc_amp_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                 adc_amp_avg[i_plane][i_hit]);
+            hist_map_dxdy_cuts["h_hodo_adc_amp_vs_time_diff_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
+                diff_time, adc_amp_avg[i_plane][i_hit]);
+          }
+          if (is_proton) {
+            hist_map_dxdy_cuts["h_hodo_time_proton"][i_cut][i_plane][kSIG]->Fill(time_avg[i_plane][i_hit]);
           }
 
           if (matching_x[0] && matching_y[0]) {
@@ -596,6 +662,11 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
               hist_map_dxdy_cuts["h_hodo_time_diff_GEM0_xy_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(diff_time);
               hist_map_dxdy_cuts["h_hodo_adc_amp_GEM0_xy_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                   adc_amp_avg[i_plane][i_hit]);
+              hist_map_dxdy_cuts["h_hodo_adc_amp_vs_time_diff_GEM0_xy_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  diff_time, adc_amp_avg[i_plane][i_hit]);
+            }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_hodo_time_GEM0_xy_proton"][i_cut][i_plane][kSIG]->Fill(time_avg[i_plane][i_hit]);
             }
           }
           if (matching_x[1] && matching_y[1]) {
@@ -606,6 +677,11 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
               hist_map_dxdy_cuts["h_hodo_time_diff_GEM1_xy_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(diff_time);
               hist_map_dxdy_cuts["h_hodo_adc_amp_GEM1_xy_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                   adc_amp_avg[i_plane][i_hit]);
+              hist_map_dxdy_cuts["h_hodo_adc_amp_vs_time_diff_GEM1_xy_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  diff_time, adc_amp_avg[i_plane][i_hit]);
+            }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_hodo_time_GEM1_xy_proton"][i_cut][i_plane][kSIG]->Fill(time_avg[i_plane][i_hit]);
             }
           }
           if (matching_x[0]) {
@@ -616,6 +692,11 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
               hist_map_dxdy_cuts["h_hodo_time_diff_GEM0_x_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(diff_time);
               hist_map_dxdy_cuts["h_hodo_adc_amp_GEM0_x_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                   adc_amp_avg[i_plane][i_hit]);
+              hist_map_dxdy_cuts["h_hodo_adc_amp_vs_time_diff_GEM0_x_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  diff_time, adc_amp_avg[i_plane][i_hit]);
+            }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_hodo_time_GEM0_x_proton"][i_cut][i_plane][kSIG]->Fill(time_avg[i_plane][i_hit]);
             }
           }
           if (matching_y[0]) {
@@ -626,6 +707,11 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
               hist_map_dxdy_cuts["h_hodo_time_diff_GEM0_y_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(diff_time);
               hist_map_dxdy_cuts["h_hodo_adc_amp_GEM0_y_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                   adc_amp_avg[i_plane][i_hit]);
+              hist_map_dxdy_cuts["h_hodo_adc_amp_vs_time_diff_GEM0_y_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  diff_time, adc_amp_avg[i_plane][i_hit]);
+            }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_hodo_time_GEM0_y_proton"][i_cut][i_plane][kSIG]->Fill(time_avg[i_plane][i_hit]);
             }
           }
           if (matching_x[1]) {
@@ -636,6 +722,11 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
               hist_map_dxdy_cuts["h_hodo_time_diff_GEM1_x_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(diff_time);
               hist_map_dxdy_cuts["h_hodo_adc_amp_GEM1_x_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                   adc_amp_avg[i_plane][i_hit]);
+              hist_map_dxdy_cuts["h_hodo_adc_amp_vs_time_diff_GEM1_x_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  diff_time, adc_amp_avg[i_plane][i_hit]);
+            }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_hodo_time_GEM1_x_proton"][i_cut][i_plane][kSIG]->Fill(time_avg[i_plane][i_hit]);
             }
           }
           if (matching_y[1]) {
@@ -643,10 +734,14 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
             if (is_punchthrough) {
               hist_map_dxdy_cuts["h_hodo_time_GEM1_y_punchthrough"][i_cut][i_plane][kSIG]->Fill(
                   time_avg[i_plane][i_hit]);
-
               hist_map_dxdy_cuts["h_hodo_time_diff_GEM1_y_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(diff_time);
               hist_map_dxdy_cuts["h_hodo_adc_amp_GEM1_y_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                   adc_amp_avg[i_plane][i_hit]);
+              hist_map_dxdy_cuts["h_hodo_adc_amp_vs_time_diff_GEM1_y_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  diff_time, adc_amp_avg[i_plane][i_hit]);
+            }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_hodo_time_GEM1_y_proton"][i_cut][i_plane][kSIG]->Fill(time_avg[i_plane][i_hit]);
             }
           }
           if (matching_x[0] && matching_x[1]) {
@@ -659,6 +754,11 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
                   diff_time);
               hist_map_dxdy_cuts["h_hodo_adc_amp_GEM_all_x_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                   adc_amp_avg[i_plane][i_hit]);
+              hist_map_dxdy_cuts["h_hodo_adc_amp_vs_time_diff_GEM_all_x_punchthrough"][i_cut][i_plane][sig_bkd_id]
+                  ->Fill(diff_time, adc_amp_avg[i_plane][i_hit]);
+            }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_hodo_time_GEM_all_x_proton"][i_cut][i_plane][kSIG]->Fill(time_avg[i_plane][i_hit]);
             }
           }
           if (matching_y[0] && matching_y[1]) {
@@ -670,6 +770,11 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
                   diff_time);
               hist_map_dxdy_cuts["h_hodo_adc_amp_GEM_all_y_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                   adc_amp_avg[i_plane][i_hit]);
+              hist_map_dxdy_cuts["h_hodo_adc_amp_vs_time_diff_GEM_all_y_punchthrough"][i_cut][i_plane][sig_bkd_id]
+                  ->Fill(diff_time, adc_amp_avg[i_plane][i_hit]);
+            }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_hodo_time_GEM_all_y_proton"][i_cut][i_plane][kSIG]->Fill(time_avg[i_plane][i_hit]);
             }
           }
           if (matching_x[0] && matching_y[0] && matching_x[1] && matching_y[1]) {
@@ -681,6 +786,11 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
                   diff_time);
               hist_map_dxdy_cuts["h_hodo_adc_amp_GEM_all_xy_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                   adc_amp_avg[i_plane][i_hit]);
+              hist_map_dxdy_cuts["h_hodo_adc_amp_vs_time_diff_GEM_all_xy_punchthrough"][i_cut][i_plane][sig_bkd_id]
+                  ->Fill(diff_time, adc_amp_avg[i_plane][i_hit]);
+            }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_hodo_time_GEM_all_xy_proton"][i_cut][i_plane][kSIG]->Fill(time_avg[i_plane][i_hit]);
             }
           }
 
@@ -693,12 +803,20 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
               hist_map_dxdy_cuts["h_gem_cond_efficiency_all_GEM1_x_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                   golden_track_dxz[1]);
             }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_gem_cond_efficiency_all_GEM1_x_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dxz[1]);
+            }
           }
           if (matching_y[0]) {
             hist_map_dxdy_cuts["h_gem_cond_efficiency_all_GEM1_y"][i_cut][i_plane][sig_bkd_id]->Fill(
                 golden_track_dy[1]);
             if (is_punchthrough) {
               hist_map_dxdy_cuts["h_gem_cond_efficiency_all_GEM1_y_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dy[1]);
+            }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_gem_cond_efficiency_all_GEM1_y_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
                   golden_track_dy[1]);
             }
           }
@@ -709,12 +827,20 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
               hist_map_dxdy_cuts["h_gem_cond_efficiency_all_GEM0_x_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                   golden_track_dxz[0]);
             }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_gem_cond_efficiency_all_GEM0_x_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dxz[0]);
+            }
           }
           if (matching_y[1]) {
             hist_map_dxdy_cuts["h_gem_cond_efficiency_all_GEM0_y"][i_cut][i_plane][sig_bkd_id]->Fill(
                 golden_track_dy[0]);
             if (is_punchthrough) {
               hist_map_dxdy_cuts["h_gem_cond_efficiency_all_GEM0_y_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dy[0]);
+            }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_gem_cond_efficiency_all_GEM0_y_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
                   golden_track_dy[0]);
             }
           }
@@ -729,6 +855,12 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
               hist_map_dxdy_cuts["h_gem_cond_efficiency_good_hit_GEM1_x_punchthrough"][i_cut][i_plane][sig_bkd_id]
                   ->Fill(golden_track_dxz[1]);
             }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_gem_cond_efficiency_good_hit_GEM0_x_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dxz[0]);
+              hist_map_dxdy_cuts["h_gem_cond_efficiency_good_hit_GEM1_x_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dxz[1]);
+            }
           }
           if (matching_y[0] && matching_y[1]) {
             hist_map_dxdy_cuts["h_gem_cond_efficiency_good_hit_GEM0_y"][i_cut][i_plane][sig_bkd_id]->Fill(
@@ -741,6 +873,12 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
               hist_map_dxdy_cuts["h_gem_cond_efficiency_good_hit_GEM1_y_punchthrough"][i_cut][i_plane][sig_bkd_id]
                   ->Fill(golden_track_dy[1]);
             }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_gem_cond_efficiency_good_hit_GEM0_y_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dy[0]);
+              hist_map_dxdy_cuts["h_gem_cond_efficiency_good_hit_GEM1_y_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dy[1]);
+            }
           }
           if (matching_x[0] && matching_y[0]) {
             hist_map_dxdy_cuts["h_gem_cond_efficiency_all_GEM1_2D"][i_cut][i_plane][sig_bkd_id]->Fill(
@@ -749,12 +887,20 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
               hist_map_dxdy_cuts["h_gem_cond_efficiency_all_GEM1_2D_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                   golden_track_dxz[0], golden_track_dy[0]);
             }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_gem_cond_efficiency_all_GEM1_2D_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dxz[0], golden_track_dy[0]);
+            }
           }
           if (matching_x[1] && matching_y[1]) {
             hist_map_dxdy_cuts["h_gem_cond_efficiency_all_GEM0_2D"][i_cut][i_plane][sig_bkd_id]->Fill(
                 golden_track_dxz[1], golden_track_dy[1]);
             if (is_punchthrough) {
               hist_map_dxdy_cuts["h_gem_cond_efficiency_all_GEM0_2D_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dxz[1], golden_track_dy[1]);
+            }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_gem_cond_efficiency_all_GEM0_2D_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
                   golden_track_dxz[1], golden_track_dy[1]);
             }
           }
@@ -769,6 +915,12 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
               hist_map_dxdy_cuts["h_gem_cond_efficiency_good_hit_GEM1_2D_punchthrough"][i_cut][i_plane][sig_bkd_id]
                   ->Fill(golden_track_dxz[1], golden_track_dy[1]);
             }
+            if (is_proton) {
+              hist_map_dxdy_cuts["h_gem_cond_efficiency_good_hit_GEM0_2D_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dxz[0], golden_track_dy[0]);
+              hist_map_dxdy_cuts["h_gem_cond_efficiency_good_hit_GEM1_2D_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dxz[1], golden_track_dy[1]);
+            }
           }
           // End GEM Conditional Efficiency histograms
           // Start GEM Efficiency histograms
@@ -778,11 +930,17 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
           if (is_punchthrough)
             hist_map_dxdy_cuts["h_gem_efficiency_all_GEM0_x_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                 golden_track_dxz[0]);
+          if (is_proton)
+            hist_map_dxdy_cuts["h_gem_efficiency_all_GEM0_x_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
+                golden_track_dxz[0]);
           if (matching_x[0]) {
             hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM0_x"][i_cut][i_plane][sig_bkd_id]->Fill(
                 golden_track_dxz[0]);
             if (is_punchthrough)
               hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM0_x_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dxz[0]);
+            if (is_proton)
+              hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM0_x_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
                   golden_track_dxz[0]);
           }
           // GEM0_y
@@ -790,11 +948,17 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
           if (is_punchthrough)
             hist_map_dxdy_cuts["h_gem_efficiency_all_GEM0_y_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                 golden_track_dy[0]);
+          if (is_proton)
+            hist_map_dxdy_cuts["h_gem_efficiency_all_GEM0_y_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
+                golden_track_dy[0]);
           if (matching_y[0]) {
             hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM0_y"][i_cut][i_plane][sig_bkd_id]->Fill(
                 golden_track_dy[0]);
             if (is_punchthrough)
               hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM0_y_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dy[0]);
+            if (is_proton)
+              hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM0_y_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
                   golden_track_dy[0]);
           }
           // GEM1_x
@@ -802,11 +966,17 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
           if (is_punchthrough)
             hist_map_dxdy_cuts["h_gem_efficiency_all_GEM1_x_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                 golden_track_dxz[1]);
+          if (is_proton)
+            hist_map_dxdy_cuts["h_gem_efficiency_all_GEM1_x_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
+                golden_track_dxz[1]);
           if (matching_x[1]) {
             hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM1_x"][i_cut][i_plane][sig_bkd_id]->Fill(
                 golden_track_dxz[1]);
             if (is_punchthrough)
               hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM1_x_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dxz[1]);
+            if (is_proton)
+              hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM1_x_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
                   golden_track_dxz[1]);
           }
 
@@ -815,11 +985,17 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
           if (is_punchthrough)
             hist_map_dxdy_cuts["h_gem_efficiency_all_GEM1_y_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                 golden_track_dy[1]);
+          if (is_proton)
+            hist_map_dxdy_cuts["h_gem_efficiency_all_GEM1_y_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
+                golden_track_dy[1]);
           if (matching_y[1]) {
             hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM1_y"][i_cut][i_plane][sig_bkd_id]->Fill(
                 golden_track_dy[1]);
             if (is_punchthrough)
               hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM1_y_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dy[1]);
+            if (is_proton)
+              hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM1_y_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
                   golden_track_dy[1]);
           }
           // GEM0 2D
@@ -828,11 +1004,17 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
           if (is_punchthrough)
             hist_map_dxdy_cuts["h_gem_efficiency_all_GEM0_2D_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                 golden_track_dxz[0], golden_track_dy[0]);
+          if (is_proton)
+            hist_map_dxdy_cuts["h_gem_efficiency_all_GEM0_2D_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
+                golden_track_dxz[0], golden_track_dy[0]);
           if (matching_x[0] && matching_y[0]) {
             hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM0_2D"][i_cut][i_plane][sig_bkd_id]->Fill(
                 golden_track_dxz[0], golden_track_dy[0]);
             if (is_punchthrough)
               hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM0_2D_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dxz[0], golden_track_dy[0]);
+            if (is_proton)
+              hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM0_2D_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
                   golden_track_dxz[0], golden_track_dy[0]);
           }
           // GEM1 2D
@@ -841,11 +1023,17 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
           if (is_punchthrough)
             hist_map_dxdy_cuts["h_gem_efficiency_all_GEM1_2D_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
                 golden_track_dxz[1], golden_track_dy[1]);
+          if (is_proton)
+            hist_map_dxdy_cuts["h_gem_efficiency_all_GEM1_2D_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
+                golden_track_dxz[1], golden_track_dy[1]);
           if (matching_x[1] && matching_y[1]) {
             hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM1_2D"][i_cut][i_plane][sig_bkd_id]->Fill(
                 golden_track_dxz[1], golden_track_dy[1]);
             if (is_punchthrough)
               hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM1_2D_punchthrough"][i_cut][i_plane][sig_bkd_id]->Fill(
+                  golden_track_dxz[1], golden_track_dy[1]);
+            if (is_proton)
+              hist_map_dxdy_cuts["h_gem_efficiency_good_hit_GEM1_2D_proton"][i_cut][i_plane][sig_bkd_id]->Fill(
                   golden_track_dxz[1], golden_track_dy[1]);
           }
 
@@ -1491,11 +1679,81 @@ void gem_tracking_by_clust(int run_number) {
                           dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
                      lad_time.nbins, lad_time.min, lad_time.max);
 
+        // Proton cut time histograms
+        hist_map_dxdy_cuts_vec[thread]["h_hodo_time_proton"][i_cut][i_plane][kSIG] =
+            new TH1F(Form("h_hodo_time_proton_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
+                          plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_proton_cut_dx%d_dy%d_%s;Hodoscope time (ns);Counts", dx_cuts[i_cut],
+                          dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                     lad_time.nbins, lad_time.min, lad_time.max);
+
+        hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM0_x_proton"][i_cut][i_plane][kSIG] =
+            new TH1F(Form("h_hodo_time_GEM0_x_proton_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
+                          plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM0_x_proton_cut_dx%d_dy%d_%s;Hodoscope time (ns);Counts", dx_cuts[i_cut],
+                          dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                     lad_time.nbins, lad_time.min, lad_time.max);
+
+        hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM0_y_proton"][i_cut][i_plane][kSIG] =
+            new TH1F(Form("h_hodo_time_GEM0_y_proton_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
+                          plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM0_y_proton_cut_dx%d_dy%d_%s;Hodoscope time (ns);Counts", dx_cuts[i_cut],
+                          dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                     lad_time.nbins, lad_time.min, lad_time.max);
+
+        hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM1_x_proton"][i_cut][i_plane][kSIG] =
+            new TH1F(Form("h_hodo_time_GEM1_x_proton_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
+                          plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM1_x_proton_cut_dx%d_dy%d_%s;Hodoscope time (ns);Counts", dx_cuts[i_cut],
+                          dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                     lad_time.nbins, lad_time.min, lad_time.max);
+
+        hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM1_y_proton"][i_cut][i_plane][kSIG] =
+            new TH1F(Form("h_hodo_time_GEM1_y_proton_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
+                          plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM1_y_proton_cut_dx%d_dy%d_%s;Hodoscope time (ns);Counts", dx_cuts[i_cut],
+                          dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                     lad_time.nbins, lad_time.min, lad_time.max);
+
+        hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM0_xy_proton"][i_cut][i_plane][kSIG] =
+            new TH1F(Form("h_hodo_time_GEM0_xy_proton_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
+                          plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM0_xy_proton_cut_dx%d_dy%d_%s;Hodoscope time (ns);Counts", dx_cuts[i_cut],
+                          dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                     lad_time.nbins, lad_time.min, lad_time.max);
+
+        hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM1_xy_proton"][i_cut][i_plane][kSIG] =
+            new TH1F(Form("h_hodo_time_GEM1_xy_proton_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
+                          plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM1_xy_proton_cut_dx%d_dy%d_%s;Hodoscope time (ns);Counts", dx_cuts[i_cut],
+                          dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                     lad_time.nbins, lad_time.min, lad_time.max);
+
+        hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM_all_x_proton"][i_cut][i_plane][kSIG] =
+            new TH1F(Form("h_hodo_time_GEM_all_x_proton_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
+                          plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM_all_x_proton_cut_dx%d_dy%d_%s;Hodoscope time (ns);Counts", dx_cuts[i_cut],
+                          dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                     lad_time.nbins, lad_time.min, lad_time.max);
+
+        hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM_all_y_proton"][i_cut][i_plane][kSIG] =
+            new TH1F(Form("h_hodo_time_GEM_all_y_proton_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
+                          plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM_all_y_proton_cut_dx%d_dy%d_%s;Hodoscope time (ns);Counts", dx_cuts[i_cut],
+                          dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                     lad_time.nbins, lad_time.min, lad_time.max);
+
+        hist_map_dxdy_cuts_vec[thread]["h_hodo_time_GEM_all_xy_proton"][i_cut][i_plane][kSIG] =
+            new TH1F(Form("h_hodo_time_GEM_all_xy_proton_cut_dx%d_dy%d_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
+                          plane_names[i_plane].c_str(), thread),
+                     Form("h_hodo_time_GEM_all_xy_proton_cut_dx%d_dy%d_%s;Hodoscope time (ns);Counts", dx_cuts[i_cut],
+                          dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                     lad_time.nbins, lad_time.min, lad_time.max);
+
         for (int i_sigbkd = 0; i_sigbkd < nSIG_BKD; ++i_sigbkd) {
           const char *sigbkd_str = (i_sigbkd == 0) ? "sig" : (i_sigbkd == 1) ? "bkd" : "noWindow";
           //////////////////////////////////////////////////////////////////
-          // ADC amplitude histograms
-
+          // Time Difference histograms
           hist_map_dxdy_cuts_vec[thread]["h_hodo_time_diff_punchthrough"][i_cut][i_plane][i_sigbkd] =
               new TH1F(Form("h_hodo_time_diff_punchthrough_cut_dx%"
                             "d_dy%d_%s_%s_thread_%d",
@@ -1705,6 +1963,90 @@ void gem_tracking_by_clust(int run_number) {
                             "Amplitude [%s];Counts",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
                        LAD_ADC.nbins, LAD_ADC.min, LAD_ADC.max);
+
+          // ADC amplitude vs TDC Diff histograms
+          hist_map_dxdy_cuts_vec[thread]["h_hodo_adc_amp_vs_time_diff_punchthrough"][i_cut][i_plane][i_sigbkd] =
+              new TH2D(
+                  Form("h_hodo_adc_amp_vs_time_diff_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                       dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                  Form("ADC Amplitude vs Time Diff Punchthrough cut_dx%d_dy%d_%s_%s;Time Difference (ns);ADC Amplitude",
+                       dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
+                  time_diff.nbins, time_diff.min, time_diff.max, LAD_ADC.nbins, LAD_ADC.min, LAD_ADC.max);
+
+          hist_map_dxdy_cuts_vec[thread]["h_hodo_adc_amp_vs_time_diff_GEM0_x_punchthrough"][i_cut][i_plane][i_sigbkd] =
+              new TH2D(Form("h_hodo_adc_amp_vs_time_diff_GEM0_x_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("ADC Amplitude vs Time Diff GEM0_x Punchthrough cut_dx%d_dy%d_%s_%s;Time Difference "
+                            "(ns);ADC Amplitude",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
+                       time_diff.nbins, time_diff.min, time_diff.max, LAD_ADC.nbins, LAD_ADC.min, LAD_ADC.max);
+
+          hist_map_dxdy_cuts_vec[thread]["h_hodo_adc_amp_vs_time_diff_GEM0_y_punchthrough"][i_cut][i_plane][i_sigbkd] =
+              new TH2D(Form("h_hodo_adc_amp_vs_time_diff_GEM0_y_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("ADC Amplitude vs Time Diff GEM0_y Punchthrough cut_dx%d_dy%d_%s_%s;Time Difference "
+                            "(ns);ADC Amplitude",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
+                       time_diff.nbins, time_diff.min, time_diff.max, LAD_ADC.nbins, LAD_ADC.min, LAD_ADC.max);
+
+          hist_map_dxdy_cuts_vec[thread]["h_hodo_adc_amp_vs_time_diff_GEM1_x_punchthrough"][i_cut][i_plane][i_sigbkd] =
+              new TH2D(Form("h_hodo_adc_amp_vs_time_diff_GEM1_x_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("ADC Amplitude vs Time Diff GEM1_x Punchthrough cut_dx%d_dy%d_%s_%s;Time Difference "
+                            "(ns);ADC Amplitude",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
+                       time_diff.nbins, time_diff.min, time_diff.max, LAD_ADC.nbins, LAD_ADC.min, LAD_ADC.max);
+
+          hist_map_dxdy_cuts_vec[thread]["h_hodo_adc_amp_vs_time_diff_GEM1_y_punchthrough"][i_cut][i_plane][i_sigbkd] =
+              new TH2D(Form("h_hodo_adc_amp_vs_time_diff_GEM1_y_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("ADC Amplitude vs Time Diff GEM1_y Punchthrough cut_dx%d_dy%d_%s_%s;Time Difference "
+                            "(ns);ADC Amplitude",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
+                       time_diff.nbins, time_diff.min, time_diff.max, LAD_ADC.nbins, LAD_ADC.min, LAD_ADC.max);
+
+          hist_map_dxdy_cuts_vec[thread]["h_hodo_adc_amp_vs_time_diff_GEM0_xy_punchthrough"][i_cut][i_plane][i_sigbkd] =
+              new TH2D(Form("h_hodo_adc_amp_vs_time_diff_GEM0_xy_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("ADC Amplitude vs Time Diff GEM0_xy Punchthrough cut_dx%d_dy%d_%s_%s;Time Difference "
+                            "(ns);ADC Amplitude",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
+                       time_diff.nbins, time_diff.min, time_diff.max, LAD_ADC.nbins, LAD_ADC.min, LAD_ADC.max);
+
+          hist_map_dxdy_cuts_vec[thread]["h_hodo_adc_amp_vs_time_diff_GEM1_xy_punchthrough"][i_cut][i_plane][i_sigbkd] =
+              new TH2D(Form("h_hodo_adc_amp_vs_time_diff_GEM1_xy_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("ADC Amplitude vs Time Diff GEM1_xy Punchthrough cut_dx%d_dy%d_%s_%s;Time Difference "
+                            "(ns);ADC Amplitude",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
+                       time_diff.nbins, time_diff.min, time_diff.max, LAD_ADC.nbins, LAD_ADC.min, LAD_ADC.max);
+
+          hist_map_dxdy_cuts_vec
+              [thread]["h_hodo_adc_amp_vs_time_diff_GEM_all_x_punchthrough"][i_cut][i_plane][i_sigbkd] =
+                  new TH2D(Form("h_hodo_adc_amp_vs_time_diff_GEM_all_x_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d",
+                                dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                           Form("ADC Amplitude vs Time Diff GEM_all_x Punchthrough cut_dx%d_dy%d_%s_%s;Time Difference "
+                                "(ns);ADC Amplitude",
+                                dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
+                           time_diff.nbins, time_diff.min, time_diff.max, LAD_ADC.nbins, LAD_ADC.min, LAD_ADC.max);
+
+          hist_map_dxdy_cuts_vec
+              [thread]["h_hodo_adc_amp_vs_time_diff_GEM_all_y_punchthrough"][i_cut][i_plane][i_sigbkd] =
+                  new TH2D(Form("h_hodo_adc_amp_vs_time_diff_GEM_all_y_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d",
+                                dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                           Form("ADC Amplitude vs Time Diff GEM_all_y Punchthrough cut_dx%d_dy%d_%s_%s;Time Difference "
+                                "(ns);ADC Amplitude",
+                                dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
+                           time_diff.nbins, time_diff.min, time_diff.max, LAD_ADC.nbins, LAD_ADC.min, LAD_ADC.max);
+
+          hist_map_dxdy_cuts_vec
+              [thread]["h_hodo_adc_amp_vs_time_diff_GEM_all_xy_punchthrough"][i_cut][i_plane][i_sigbkd] =
+                  new TH2D(Form("h_hodo_adc_amp_vs_time_diff_GEM_all_xy_punchthrough_cut_dx%d_dy%d_%s_%s_thread_%d",
+                                dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                           Form("ADC Amplitude vs Time Diff GEM_all_xy Punchthrough cut_dx%d_dy%d_%s_%s;Time "
+                                "Difference (ns);ADC Amplitude",
+                                dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
+                           time_diff.nbins, time_diff.min, time_diff.max, LAD_ADC.nbins, LAD_ADC.min, LAD_ADC.max);
 
           //////////////////////////////////////////////////////////////////
           // GEM Conditional Efficiency histograms (1D for x and y, for both
@@ -2163,6 +2505,156 @@ void gem_tracking_by_clust(int run_number) {
                             "(cm);Golden Track y (cm)",
                             dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str),
                        dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
+
+          //////////////////////////////////////////////////////////////////
+          // Efficiency histograms for proton ID cut
+          hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM0_x_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH1F(Form("h_gem_cond_efficiency_all_GEM0_x_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_gem_cond_efficiency_all_GEM0_x_proton_cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       dx_NBINS, dx_min, dx_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM0_x_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM0_x_proton_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_gem_cond_efficiency_good_hit_GEM0_x_proton_cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       dx_NBINS, dx_min, dx_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM0_y_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH1F(Form("h_gem_cond_efficiency_all_GEM0_y_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_gem_cond_efficiency_all_GEM0_y_proton_cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       dy_NBINS, dy_min, dy_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM0_y_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM0_y_proton_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_gem_cond_efficiency_good_hit_GEM0_y_proton_cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       dy_NBINS, dy_min, dy_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM1_x_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH1F(Form("h_gem_cond_efficiency_all_GEM1_x_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_gem_cond_efficiency_all_GEM1_x_proton_cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       dx_NBINS, dx_min, dx_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM1_x_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM1_x_proton_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_gem_cond_efficiency_good_hit_GEM1_x_proton_cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       dx_NBINS, dx_min, dx_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM1_y_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH1F(Form("h_gem_cond_efficiency_all_GEM1_y_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_gem_cond_efficiency_all_GEM1_y_proton_cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       dy_NBINS, dy_min, dy_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM1_y_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH1F(Form("h_gem_cond_efficiency_good_hit_GEM1_y_proton_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("h_gem_cond_efficiency_good_hit_GEM1_y_proton_cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       dy_NBINS, dy_min, dy_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM0_2D_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH2F(
+                  Form("h_gem_cond_efficiency_all_GEM0_2D_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                       dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                  Form("GEM0 Conditional Efficiency All Proton (x vs y) [%s];Golden Track x (cm);Golden Track y (cm)",
+                       sigbkd_str),
+                  dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM0_2D_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH2F(Form("h_gem_cond_efficiency_good_hit_GEM0_2D_proton_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0 Conditional Efficiency Good Hit Proton (x vs y) [%s];Golden Track x (cm);Golden "
+                            "Track y (cm)",
+                            sigbkd_str),
+                       dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_all_GEM1_2D_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH2F(
+                  Form("h_gem_cond_efficiency_all_GEM1_2D_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                       dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                  Form("GEM1 Conditional Efficiency All Proton (x vs y) [%s];Golden Track x (cm);Golden Track y (cm)",
+                       sigbkd_str),
+                  dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_cond_efficiency_good_hit_GEM1_2D_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH2F(Form("h_gem_cond_efficiency_good_hit_GEM1_2D_proton_cut_dx%d_dy%d_%s_%s_thread_%d",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1 Conditional Efficiency Good Hit Proton (x vs y) [%s];Golden Track x (cm);Golden "
+                            "Track y (cm)",
+                            sigbkd_str),
+                       dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
+          // Non-conditional GEM efficiency histograms for proton ID cut
+          hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM0_x_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH1F(Form("h_gem_efficiency_all_GEM0_x_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0_x Efficiency All Proton cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       dx_NBINS, dx_min, dx_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM0_x_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH1F(Form("h_gem_efficiency_good_hit_GEM0_x_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0_x Efficiency Good Hit Proton cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       dx_NBINS, dx_min, dx_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM0_y_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH1F(Form("h_gem_efficiency_all_GEM0_y_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0_y Efficiency All Proton cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       dy_NBINS, dy_min, dy_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM0_y_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH1F(Form("h_gem_efficiency_good_hit_GEM0_y_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0_y Efficiency Good Hit Proton cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       dy_NBINS, dy_min, dy_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM1_x_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH1F(Form("h_gem_efficiency_all_GEM1_x_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1_x Efficiency All Proton cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       dx_NBINS, dx_min, dx_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM1_x_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH1F(Form("h_gem_efficiency_good_hit_GEM1_x_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1_x Efficiency Good Hit Proton cut_dx%d_dy%d_%s_%s;Cluster x [%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       dx_NBINS, dx_min, dx_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM1_y_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH1F(Form("h_gem_efficiency_all_GEM1_y_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1_y Efficiency All Proton cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       dy_NBINS, dy_min, dy_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM1_y_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH1F(Form("h_gem_efficiency_good_hit_GEM1_y_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1_y Efficiency Good Hit Proton cut_dx%d_dy%d_%s_%s;Cluster y [%s];Counts",
+                            dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, sigbkd_str),
+                       dy_NBINS, dy_min, dy_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM0_2D_proton"][i_cut][i_plane][i_sigbkd] = new TH2F(
+              Form("h_gem_efficiency_all_GEM0_2D_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
+                   plane_names[i_plane].c_str(), sigbkd_str, thread),
+              Form("GEM0 Efficiency All Proton (x vs y) [%s];Golden Track x (cm);Golden Track y (cm)", sigbkd_str),
+              dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM0_2D_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH2F(Form("h_gem_efficiency_good_hit_GEM0_2D_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM0 Efficiency Good Hit Proton (x vs y) [%s];Golden Track x (cm);Golden Track y (cm)",
+                            sigbkd_str),
+                       dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_all_GEM1_2D_proton"][i_cut][i_plane][i_sigbkd] = new TH2F(
+              Form("h_gem_efficiency_all_GEM1_2D_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut], dy_cuts[i_cut],
+                   plane_names[i_plane].c_str(), sigbkd_str, thread),
+              Form("GEM1 Efficiency All Proton (x vs y) [%s];Golden Track x (cm);Golden Track y (cm)", sigbkd_str),
+              dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
+          hist_map_dxdy_cuts_vec[thread]["h_gem_efficiency_good_hit_GEM1_2D_proton"][i_cut][i_plane][i_sigbkd] =
+              new TH2F(Form("h_gem_efficiency_good_hit_GEM1_2D_proton_cut_dx%d_dy%d_%s_%s_thread_%d", dx_cuts[i_cut],
+                            dy_cuts[i_cut], plane_names[i_plane].c_str(), sigbkd_str, thread),
+                       Form("GEM1 Efficiency Good Hit Proton (x vs y) [%s];Golden Track x (cm);Golden Track y (cm)",
+                            sigbkd_str),
+                       dx_NBINS, dx_min, dx_max, dy_NBINS, dy_min, dy_max);
         }
       }
     }
@@ -2533,6 +3025,17 @@ void gem_tracking_by_clust(int run_number) {
       hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_y_punchthrough"][i_cut][i_plane][kSIG]->Write();
       hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_xy_punchthrough"][i_cut][i_plane][kSIG]->Write();
 
+      hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG]->Write();
+      hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_x_proton"][i_cut][i_plane][kSIG]->Write();
+      hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_y_proton"][i_cut][i_plane][kSIG]->Write();
+      hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_x_proton"][i_cut][i_plane][kSIG]->Write();
+      hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_y_proton"][i_cut][i_plane][kSIG]->Write();
+      hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_xy_proton"][i_cut][i_plane][kSIG]->Write();
+      hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_xy_proton"][i_cut][i_plane][kSIG]->Write();
+      hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_x_proton"][i_cut][i_plane][kSIG]->Write();
+      hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_y_proton"][i_cut][i_plane][kSIG]->Write();
+      hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_xy_proton"][i_cut][i_plane][kSIG]->Write();
+
       string bkdSubDir =
           Form("time/%s/cut_dx%d_dy%d/Diff_Times_BkdSub", plane_names[i_plane].c_str(), dx_cuts[i_cut], dy_cuts[i_cut]);
       string noSubDir =
@@ -2630,8 +3133,6 @@ void gem_tracking_by_clust(int run_number) {
                                 dy_cuts[i_cut], plane_names[i_plane].c_str()),
                            outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
-      outputFile->cd(
-          Form("time/%s/cut_dx%d_dy%d/ADC_Amp", plane_names[i_plane].c_str(), dx_cuts[i_cut], dy_cuts[i_cut]));
       bkdSubDir =
           Form("time/%s/cut_dx%d_dy%d/ADC_Amp_BkdSub", plane_names[i_plane].c_str(), dx_cuts[i_cut], dy_cuts[i_cut]);
       noSubDir = Form("time/%s/cut_dx%d_dy%d/ADC_Amp", plane_names[i_plane].c_str(), dx_cuts[i_cut], dy_cuts[i_cut]);
@@ -2725,6 +3226,113 @@ void gem_tracking_by_clust(int run_number) {
                            Form("hodo_adc_amp_GEM_all_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                                 plane_names[i_plane].c_str()),
                            outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+      // Time Diff vs ADC Amp histograms
+      bkdSubDir = Form("time/%s/cut_dx%d_dy%d/ADC_Amp_vs_DiffTime_BkdSub", plane_names[i_plane].c_str(), dx_cuts[i_cut],
+                       dy_cuts[i_cut]);
+      noSubDir  = Form("time/%s/cut_dx%d_dy%d/ADC_Amp_vs_DiffTime", plane_names[i_plane].c_str(), dx_cuts[i_cut],
+                       dy_cuts[i_cut]);
+      // Create directories for bkdSubDir and noSubDir if they do not exist
+      if (!outputFile->GetDirectory(noSubDir.c_str())) {
+        outputFile->mkdir(noSubDir.c_str());
+      }
+      if (!outputFile->GetDirectory(bkdSubDir.c_str())) {
+        outputFile->mkdir(bkdSubDir.c_str());
+      }
+      // Draw time diff vs ADC amp histograms: good_hit / all for GEM0_x,
+      drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_vs_time_diff_punchthrough"][i_cut][i_plane],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("adc_amp_vs_time_diff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           Form("adc_amp_vs_time_diff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+                                plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_vs_time_diff_GEM0_x_punchthrough"][i_cut][i_plane],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_x_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("adc_amp_vs_time_diff_GEM0_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut],
+                                dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                           Form("adc_amp_vs_time_diff_GEM0_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut],
+                                dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_vs_time_diff_GEM0_y_punchthrough"][i_cut][i_plane],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_y_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("adc_amp_vs_time_diff_GEM0_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut],
+                                dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                           Form("adc_amp_vs_time_diff_GEM0_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut],
+                                dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_vs_time_diff_GEM1_x_punchthrough"][i_cut][i_plane],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_x_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("adc_amp_vs_time_diff_GEM1_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut],
+                                dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                           Form("adc_amp_vs_time_diff_GEM1_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut],
+                                dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_vs_time_diff_GEM1_y_punchthrough"][i_cut][i_plane],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+                           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_y_punchthrough"][i_cut][i_plane][kSIG],
+                           Form("adc_amp_vs_time_diff_GEM1_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut],
+                                dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                           Form("adc_amp_vs_time_diff_GEM1_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut],
+                                dy_cuts[i_cut], plane_names[i_plane].c_str()),
+                           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawBkdSubHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_vs_time_diff_GEM0_xy_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_xy_punchthrough"][i_cut][i_plane][kSIG],
+          Form("adc_amp_vs_time_diff_GEM0_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("adc_amp_vs_time_diff_GEM0_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawBkdSubHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_vs_time_diff_GEM1_xy_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_xy_punchthrough"][i_cut][i_plane][kSIG],
+          Form("adc_amp_vs_time_diff_GEM1_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("adc_amp_vs_time_diff_GEM1_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawBkdSubHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_vs_time_diff_GEM_all_x_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_x_punchthrough"][i_cut][i_plane][kSIG],
+          Form("adc_amp_vs_time_diff_GEM_all_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("adc_amp_vs_time_diff_GEM_all_x_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawBkdSubHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_vs_time_diff_GEM_all_y_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_y_punchthrough"][i_cut][i_plane][kSIG],
+          Form("adc_amp_vs_time_diff_GEM_all_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("adc_amp_vs_time_diff_GEM_all_y_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawBkdSubHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_hodo_adc_amp_vs_time_diff_GEM_all_xy_punchthrough"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_xy_punchthrough"][i_cut][i_plane][kSIG],
+          Form("adc_amp_vs_time_diff_GEM_all_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("adc_amp_vs_time_diff_GEM_all_xy_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
       bkdSubDir = Form("GEM_cond_Efficiency_BkdSub/%s/cut_dx%d_dy%d", plane_names[i_plane].c_str(), dx_cuts[i_cut],
                        dy_cuts[i_cut]);
@@ -2892,6 +3500,75 @@ void gem_tracking_by_clust(int run_number) {
                plane_names[i_plane].c_str()),
           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
 
+      // Proton Histograms
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM0_x_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM0_x_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_x_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_x_proton"][i_cut][i_plane][kSIG],
+          Form("GEM0_x Conditional Efficiency Proton cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM0_x_cond_eff_proton_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM0_y_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM0_y_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_y_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_y_proton"][i_cut][i_plane][kSIG],
+          Form("GEM0_y Conditional Efficiency Proton cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM0_y_cond_eff_proton_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM1_x_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM1_x_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_x_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_x_proton"][i_cut][i_plane][kSIG],
+          Form("GEM1_x Conditional Efficiency Proton cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM1_x_cond_eff_proton_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM1_y_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM1_y_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_y_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_y_proton"][i_cut][i_plane][kSIG],
+          Form("GEM1_y Conditional Efficiency Proton cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM1_y_cond_eff_proton_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM0_2D_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM0_2D_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_xy_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_xy_proton"][i_cut][i_plane][kSIG],
+          Form("GEM0 2D Conditional Efficiency Proton cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM0_2D_cond_eff_proton_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_good_hit_GEM1_2D_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_cond_efficiency_all_GEM1_2D_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM_all_xy_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_xy_proton"][i_cut][i_plane][kSIG],
+          Form("GEM1 2D Conditional Efficiency Proton cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM1_2D_cond_eff_proton_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
       //////////////////////////////////////////////////////////
       // Non-conditional GEM efficiency histograms
       bkdSubDir =
@@ -2909,8 +3586,8 @@ void gem_tracking_by_clust(int run_number) {
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM0_x"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_x"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
-          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_x"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
           Form("GEM0_x Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
           Form("GEM0_x_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()), outputFile,
           noSubDir.c_str(), bkdSubDir.c_str());
@@ -2920,8 +3597,8 @@ void gem_tracking_by_clust(int run_number) {
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM0_y"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_y"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
-          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_y"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
           Form("GEM0_y Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
           Form("GEM0_y_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()), outputFile,
           noSubDir.c_str(), bkdSubDir.c_str());
@@ -2931,8 +3608,8 @@ void gem_tracking_by_clust(int run_number) {
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM1_x"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_x"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
-          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_x"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
           Form("GEM1_x Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
           Form("GEM1_x_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()), outputFile,
           noSubDir.c_str(), bkdSubDir.c_str());
@@ -2942,8 +3619,8 @@ void gem_tracking_by_clust(int run_number) {
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM1_y"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_y"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
-          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_y"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
           Form("GEM1_y Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
           Form("GEM1_y_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()), outputFile,
           noSubDir.c_str(), bkdSubDir.c_str());
@@ -2953,8 +3630,8 @@ void gem_tracking_by_clust(int run_number) {
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM0_2D"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_2D"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
-          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_xy"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
           Form("GEM0_2D Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
           Form("GEM0_2D_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
@@ -2964,8 +3641,8 @@ void gem_tracking_by_clust(int run_number) {
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM1_2D"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_2D"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
-          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_xy"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time"][i_cut][i_plane][kSIG],
           Form("GEM1_2D Efficiency cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
           Form("GEM1_2D_eff_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
@@ -2976,8 +3653,8 @@ void gem_tracking_by_clust(int run_number) {
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM0_x_punchthrough"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_x_punchthrough"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
-          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_x_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM0_x Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
           Form("GEM0_x_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
@@ -2989,8 +3666,8 @@ void gem_tracking_by_clust(int run_number) {
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM0_y_punchthrough"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_y_punchthrough"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
-          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_y_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM0_y Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
           Form("GEM0_y_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
@@ -3002,8 +3679,8 @@ void gem_tracking_by_clust(int run_number) {
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM1_x_punchthrough"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_x_punchthrough"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
-          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_x_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM1_x Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
           Form("GEM1_x_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
@@ -3015,8 +3692,8 @@ void gem_tracking_by_clust(int run_number) {
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM1_y_punchthrough"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_y_punchthrough"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
-          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_y_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM1_y Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
           Form("GEM1_y_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
@@ -3028,8 +3705,8 @@ void gem_tracking_by_clust(int run_number) {
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM0_2D_punchthrough"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_2D_punchthrough"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
-          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_xy_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM0 2D Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
           Form("GEM0_2D_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
@@ -3041,12 +3718,80 @@ void gem_tracking_by_clust(int run_number) {
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM1_2D_punchthrough"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_2D_punchthrough"][i_cut][i_plane],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
-          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
           hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_xy_punchthrough"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
           Form("GEM1 2D Efficiency Punchthrough cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
           Form("GEM1_2D_eff_punchthrough_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
                plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      // Proton histograms
+      // Non-conditional GEM efficiency histograms for protons
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM0_x_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_x_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_x_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          Form("GEM0_x Efficiency Proton cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM0_x_eff_proton_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM0_y_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_y_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_y_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          Form("GEM0_y Efficiency Proton cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM0_y_eff_proton_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM1_x_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_x_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_x_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          Form("GEM1_x Efficiency Proton cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM1_x_eff_proton_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM1_y_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_y_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_y_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          Form("GEM1_y Efficiency Proton cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM1_y_eff_proton_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM0_2D_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM0_2D_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM0_xy_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          Form("GEM0_2D Efficiency Proton cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM0_2D_eff_proton_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
+          outputFile, noSubDir.c_str(), bkdSubDir.c_str());
+
+      drawEfficiencyHistograms(
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_good_hit_GEM1_2D_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_gem_efficiency_all_GEM1_2D_proton"][i_cut][i_plane],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_GEM1_xy_proton"][i_cut][i_plane][kSIG],
+          hist_map_dxdy_cuts_vec[0]["h_hodo_time_proton"][i_cut][i_plane][kSIG],
+          Form("GEM1_2D Efficiency Proton cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut],
+               plane_names[i_plane].c_str()),
+          Form("GEM1_2D_eff_proton_cut_dx%d_dy%d_%s", dx_cuts[i_cut], dy_cuts[i_cut], plane_names[i_plane].c_str()),
           outputFile, noSubDir.c_str(), bkdSubDir.c_str());
     }
   }

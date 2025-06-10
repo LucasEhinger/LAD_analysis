@@ -8,38 +8,108 @@
 
 using namespace std;
 
-const int nPlanes                 = 5; // Number of GEM planes
+enum class HistType { Integral = 0, Average = 1, Average_y = 2 };
+
+struct hist_param {
+  string name;  // Histogram name
+  string yaxis; // Y-axis label
+  HistType op;  // Whether to use integral or avg
+  double xmin;  // Peak value
+  double xmax;  // Window value
+  double ymin;  // Minimum Y value
+  double ymax;  // Maximum Y value
+  hist_param(const string &n, const string &y, HistType operation, double x_min, double x_max)
+      : name(n), yaxis(y), op(operation), xmin(x_min), xmax(x_max), ymin(0), ymax(1e36) {}
+  hist_param(const string &n, const string &y, HistType operation, double x_min, double x_max, double y_min,
+             double y_max)
+      : name(n), yaxis(y), op(operation), xmin(x_min), xmax(x_max), ymin(y_min), ymax(y_max) {}
+};
+
+const double window_start         = 1625; // Start of the window
+const double window_end           = 1775; // End of the window
+const double GEM_dim              = 70;
+const double ymin_avg             = 0.1; // Minimum Y value for average
+const double ymax_avg             = 1.5; // Maximum Y value for average
+const int nPlanes                 = 5;   // Number of GEM planes
 const string plane_names[nPlanes] = {"000", "001", "100", "101", "200"};
-const int nCuts                   = 5; // Number of cuts to analyze
-const int nHists                  = 3; // Number of histograms to analyze (peak, window, bkd_no_window)
-const string hist_names[nHists]   = {"time/%s/cut%d/Times/h_hodo_time_GEM_all_x_punchthrough_cut%d_%s",
-                                     "time/%s/cut%d/Times/h_hodo_time_GEM0_x_punchthrough_cut%d_%s",
-                                     "time/%s/cut%d/Times/h_hodo_time_GEM1_x_punchthrough_cut%d_%s"};
+const int nCuts                   = 5;                // Number of cuts to analyze
+const int cut_values[nCuts]       = {1, 2, 4, 6, 10}; // dxy cuts in cm
+
+vector<hist_param> hist_params = {
+    {"time/%s/cut_dx%d_dy%d/Times/h_hodo_time_GEM_all_x_punchthrough_cut_dx%d_dy%d_%s", "Signal Integral",
+     HistType::Integral, window_start, window_end},
+    {"time/%s/cut_dx%d_dy%d/Times/h_hodo_time_GEM0_x_punchthrough_cut_dx%d_dy%d_%s", "Signal Integral",
+     HistType::Integral, window_start, window_end},
+    {"time/%s/cut_dx%d_dy%d/Times/h_hodo_time_GEM1_x_punchthrough_cut_dx%d_dy%d_%s", "Signal Integral",
+     HistType::Integral, window_start, window_end},
+    // // Efficiency Bkd Sub
+    {"GEM_Efficiency_BkdSub/%s/cut_dx%d_dy%d/h_GEM0_x_eff_punchthrough_cut_dx%d_dy%d_%s", "GEM0 Efficiency",
+     HistType::Average_y, -GEM_dim, GEM_dim, ymin_avg, ymax_avg},
+    {"GEM_Efficiency_BkdSub/%s/cut_dx%d_dy%d/h_GEM1_x_eff_punchthrough_cut_dx%d_dy%d_%s", "GEM1 Efficiency",
+     HistType::Average_y, -GEM_dim, GEM_dim, ymin_avg, ymax_avg},
+    // Efficiency No Bkd Sub
+    {"GEM_Efficiency/%s/cut_dx%d_dy%d/h_GEM0_x_eff_punchthrough_cut_dx%d_dy%d_%s", "GEM0 Efficiency",
+     HistType::Average_y, -GEM_dim, GEM_dim, ymin_avg, ymax_avg},
+    {"GEM_Efficiency/%s/cut_dx%d_dy%d/h_GEM1_x_eff_punchthrough_cut_dx%d_dy%d_%s", "GEM1 Efficiency",
+     HistType::Average_y, -GEM_dim, GEM_dim, ymin_avg, ymax_avg},
+    // // Conditional Efficiency
+    {"GEM_cond_Efficiency_BkdSub/%s/cut_dx%d_dy%d/h_GEM0_x_cond_eff_punchthrough_cut_dx%d_dy%d_%s",
+     "GEM0 Conditional Efficiency", HistType::Average_y, -GEM_dim, GEM_dim, ymin_avg, ymax_avg},
+    {"GEM_cond_Efficiency_BkdSub/%s/cut_dx%d_dy%d/h_GEM1_x_cond_eff_punchthrough_cut_dx%d_dy%d_%s",
+     "GEM1 Conditional Efficiency", HistType::Average_y, -GEM_dim, GEM_dim, ymin_avg, ymax_avg},
+    // // Conditional Efficiency No Bkd Sub
+    {"GEM_cond_Efficiency/%s/cut_dx%d_dy%d/h_GEM0_x_cond_eff_punchthrough_cut_dx%d_dy%d_%s",
+     "GEM0 Conditional Efficiency", HistType::Average_y, -GEM_dim, GEM_dim, ymin_avg, ymax_avg},
+    {"GEM_cond_Efficiency/%s/cut_dx%d_dy%d/h_GEM1_x_cond_eff_punchthrough_cut_dx%d_dy%d_%s",
+     "GEM1 Conditional Efficiency", HistType::Average_y, -GEM_dim, GEM_dim, ymin_avg, ymax_avg},
+    // // ADC/Edep Avg
+    {"time/%s/cut_dx%d_dy%d/ADC_Amp_BkdSub/h_hodo_adc_amp_GEM_all_x_punchthrough_cut_dx%d_dy%d_%s",
+     "Average Hodo ADC (mV)", HistType::Average, 0, 1e36},
+    {"time/%s/cut_dx%d_dy%d/ADC_Amp_BkdSub/h_hodo_adc_amp_GEM0_x_punchthrough_cut_dx%d_dy%d_%s",
+     "Average Hodo ADC (mV)", HistType::Average, 0, 1e36},
+    {"time/%s/cut_dx%d_dy%d/ADC_Amp_BkdSub/h_hodo_adc_amp_GEM1_x_punchthrough_cut_dx%d_dy%d_%s",
+     "Average Hodo ADC (mV)", HistType::Average, 0, 1e36},
+    // Adc/Edep No Bkd Sub
+    {"time/%s/cut_dx%d_dy%d/ADC_Amp/h_hodo_adc_amp_GEM_all_x_punchthrough_cut_dx%d_dy%d_%s", "Average Hodo ADC (mV)",
+     HistType::Average, 0, 1e36},
+    {"time/%s/cut_dx%d_dy%d/ADC_Amp/h_hodo_adc_amp_GEM0_x_punchthrough_cut_dx%d_dy%d_%s", "Average Hodo ADC (mV)",
+     HistType::Average, 0, 1e36},
+    {"time/%s/cut_dx%d_dy%d/ADC_Amp/h_hodo_adc_amp_GEM1_x_punchthrough_cut_dx%d_dy%d_%s", "Average Hodo ADC (mV)",
+     HistType::Average, 0, 1e36},
+    // // Time Difference Avg
+    // {"time/%s/cut_dx%d_dy%d/Diff_Times_BkdSub/h_hodo_time_diff_GEM_all_x_punchthrough_cut_dx%d_dy%d_%s",
+    //  "Average Time Difference", HistType::Average, window_start, window_end},
+    // {"time/%s/cut_dx%d_dy%d/Diff_Times_BkdSub/h_hodo_time_diff_GEM0_x_punchthrough_cut_dx%d_dy%d_%s",
+    //  "Average Time Difference", HistType::Average, window_start, window_end},
+    // {"time/%s/cut_dx%d_dy%d/Diff_Times_BkdSub/h_hodo_time_diff_GEM1_x_punchthrough_cut_dx%d_dy%d_%s",
+    //  "Average Time Difference", HistType::Average, window_start, window_end},
+};
 
 // Define a pair called window to hold the lower and upper bounds
-std::pair<double, double> window        = {1625, 1775};
-std::pair<double, double> peak          = {1750, 1780};
-std::pair<double, double> bkd_no_window = {1850, 1950};
+pair<double, double> window        = {1625, 1775};
+pair<double, double> peak          = {1750, 1780};
+pair<double, double> bkd_no_window = {1850, 1950};
 
 void analyze_gain_scan_by_clust() {
   // Set ROOT to batch mode to suppress GUI
   gROOT->SetBatch(kTRUE);
   // Vector of run numbers
   // Map of run numbers to GEM gains
-  std::map<int, double> run_gain_map = {{22609, 2946}, {22610, 3027}, {22611, 3109},
-                                        {22613, 3154}, {22614, 3190}, {22615, 3232}};
+  map<int, double> run_gain_map = {{22609, 2946}, {22610, 3027}, {22611, 3109},
+                                   {22613, 3154}, {22614, 3190}, {22615, 3232}};
 
+  // map<int, double> run_gain_map = {{22609, 2946}, {22615, 3232}};
   char spec_prefix = 'H';
   TString file_prefix =
       "/home/ehingerl/hallc/analysis/lad_calib/gem_tracking/files/tracking_gem/tracking_gem_%d_-1_%c.root";
 
   // Prepare arrays of maps for plotting: [nPlanes][nCuts]
-  std::vector<std::vector<std::vector<std::map<int, double>>>> peak_int(
-      nPlanes, std::vector<std::vector<std::map<int, double>>>(nCuts, std::vector<std::map<int, double>>(nHists)));
-  std::vector<std::vector<std::vector<std::map<int, double>>>> window_int(
-      nPlanes, std::vector<std::vector<std::map<int, double>>>(nCuts, std::vector<std::map<int, double>>(nHists)));
-  std::vector<std::vector<std::vector<std::map<int, double>>>> bkd_no_window_int(
-      nPlanes, std::vector<std::vector<std::map<int, double>>>(nCuts, std::vector<std::map<int, double>>(nHists)));
+  const int nHists = hist_params.size();
+  const int nRuns  = run_gain_map.size();
+
+  // 4D vectors: [nPlanes][nCuts][nHists][run]
+  vector<vector<vector<map<int, double>>>> summary_vals(
+      nPlanes, vector<vector<map<int, double>>>(nCuts, vector<map<int, double>>(nHists)));
 
   for (const auto &run_gain : run_gain_map) {
     for (int i_plane = 0; i_plane < nPlanes; ++i_plane) {
@@ -48,33 +118,64 @@ void analyze_gain_scan_by_clust() {
 
           int run = run_gain.first;
           // Construct file name
-          std::string filename = Form(file_prefix, run, spec_prefix);
+          string filename = Form(file_prefix, run, spec_prefix);
 
           // Open ROOT file
           TFile *f = TFile::Open(filename.c_str(), "READ");
           if (!f || f->IsZombie()) {
-            std::cerr << "Could not open file: " << filename << std::endl;
+            cerr << "Could not open file: " << filename << endl;
             continue;
           }
 
           // Get histogram
-          TH1 *h = dynamic_cast<TH1 *>(f->Get(Form(hist_names[i_hist].c_str(), plane_names[i_plane].c_str(), i_cut,
-                                                   i_cut, plane_names[i_plane].c_str())));
-          if (!h) {
-            std::cerr << "Could not find histogram " << hist_names[i_hist] << " in " << filename << std::endl;
-            f->Close();
-            continue;
+          TH1 *h = dynamic_cast<TH1 *>(
+              f->Get(Form(hist_params[i_hist].name.c_str(), plane_names[i_plane].c_str(), cut_values[i_cut],
+                          cut_values[i_cut], cut_values[i_cut], cut_values[i_cut], plane_names[i_plane].c_str())));
+
+          double int_or_avg = 0;
+          // Calculate integrals
+          if (hist_params[i_hist].op == HistType::Integral) {
+            int_or_avg = h->Integral(h->FindBin(hist_params[i_hist].xmin), h->FindBin(hist_params[i_hist].xmax));
+          } else if (hist_params[i_hist].op == HistType::Average) {
+            double sum    = 0;
+            double weight = 0;
+            int bin_min   = h->FindBin(hist_params[i_hist].xmin);
+            int bin_max   = h->FindBin(hist_params[i_hist].xmax);
+            for (int bin = bin_min; bin <= bin_max; ++bin) {
+              double content = h->GetBinContent(bin);
+              double center  = h->GetBinCenter(bin);
+              if (content > hist_params[i_hist].ymax || content < hist_params[i_hist].ymin)
+                continue;
+              sum += content * center; // Multiply by bin center for average
+              weight += content;       // Use content as weight
+            }
+            if (weight > 0)
+              int_or_avg = sum / weight;
+            else
+              int_or_avg = 0;
           }
 
-          // Calculate integrals
-          double integral_peak   = h->Integral(h->FindBin(peak.first), h->FindBin(peak.second));
-          double integral_window = h->Integral(h->FindBin(window.first), h->FindBin(window.second));
-          double integral_bkd_no_window =
-              h->Integral(h->FindBin(bkd_no_window.first), h->FindBin(bkd_no_window.second));
-          // Store results in maps
-          peak_int[i_plane][i_cut][i_hist][run]          = integral_peak;
-          window_int[i_plane][i_cut][i_hist][run]        = integral_window;
-          bkd_no_window_int[i_plane][i_cut][i_hist][run] = integral_bkd_no_window;
+          else if (hist_params[i_hist].op == HistType::Average_y) {
+            double sum    = 0;
+            double weight = 0;
+            int bin_min   = h->FindBin(hist_params[i_hist].xmin);
+            int bin_max   = h->FindBin(hist_params[i_hist].xmax);
+            for (int bin = bin_min; bin <= bin_max; ++bin) {
+              double content = h->GetBinContent(bin);
+              double center  = h->GetBinCenter(bin);
+              if (content > hist_params[i_hist].ymax || content < hist_params[i_hist].ymin)
+                continue;
+              sum += content;
+              weight += 1;
+            }
+            if (weight > 0)
+              int_or_avg = sum / weight;
+            else
+              int_or_avg = 0;
+          }
+
+          // Store results in summary_vals
+          summary_vals[i_plane][i_cut][i_hist][run] = int_or_avg;
 
           f->Close();
         }
@@ -86,65 +187,57 @@ void analyze_gain_scan_by_clust() {
   cout << "Creating output file..." << endl;
   TFile *outFile = new TFile("files/gain_scan_clust/gain_scan_graphs.root", "RECREATE");
 
-  // Loop over planes, cuts, and hists
-  for (int i_plane = 0; i_plane < nPlanes; ++i_plane) {
-    for (int i_cut = 0; i_cut < nCuts; ++i_cut) {
-      for (int i_hist = 0; i_hist < nHists; ++i_hist) {
-        // Create directory for plane/cut/hist
-        TString dir_name = Form("plane_%s/cut_%d/hist_%d", plane_names[i_plane].c_str(), i_cut, i_hist);
-        outFile->mkdir(dir_name);
-        outFile->cd(dir_name);
-
-        TGraph *g_peak           = new TGraph();
-        TGraph *g_peak_bkd_sub   = new TGraph();
-        TGraph *g_window         = new TGraph();
-        TGraph *g_window_bkd_sub = new TGraph();
-        TGraph *g_bkd_no_window  = new TGraph();
-
-        int i = 0;
+  for (int i_hist = 0; i_hist < nHists; ++i_hist) {
+    for (int i_plane = 0; i_plane < nPlanes; ++i_plane) {
+      for (int i_cut = 0; i_cut < nCuts; ++i_cut) {
+        vector<double> x_vals, y_vals;
         for (const auto &run_gain : run_gain_map) {
           int run     = run_gain.first;
           double gain = run_gain.second;
-
-          double peak_val          = peak_int[i_plane][i_cut][i_hist][run];
-          double window_val        = window_int[i_plane][i_cut][i_hist][run];
-          double bkd_no_window_val = bkd_no_window_int[i_plane][i_cut][i_hist][run];
-
-          double bkd_nowindow_width = bkd_no_window.second - bkd_no_window.first;
-          double peak_width         = peak.second - peak.first;
-          double window_width       = window.second - window.first;
-
-          double bkd_no_window_peak_norm       = bkd_no_window_val * (peak_width / bkd_nowindow_width);
-          double bkd_no_window_for_window_norm = bkd_no_window_val * (window_width / bkd_nowindow_width);
-
-          g_peak->SetPoint(i, gain, peak_val);
-          g_window->SetPoint(i, gain, window_val);
-          g_bkd_no_window->SetPoint(i, gain, bkd_no_window_val);
-          g_peak_bkd_sub->SetPoint(i, gain, peak_val - bkd_no_window_peak_norm);
-          g_window_bkd_sub->SetPoint(i, gain, window_val - bkd_no_window_for_window_norm);
-          i++;
+          auto it     = summary_vals[i_plane][i_cut][i_hist].find(run);
+          if (it != summary_vals[i_plane][i_cut][i_hist].end()) {
+            x_vals.push_back(gain);
+            y_vals.push_back(it->second);
+          }
         }
+        if (x_vals.empty())
+          continue;
 
-        g_peak->SetMarkerStyle(20);
-        g_window->SetMarkerStyle(20);
-        g_bkd_no_window->SetMarkerStyle(20);
-        g_peak_bkd_sub->SetMarkerStyle(20);
-        g_window_bkd_sub->SetMarkerStyle(20);
+        TGraph *gr = new TGraph(x_vals.size(), &x_vals[0], &y_vals[0]);
+        gr->SetTitle(
+            Form("%s Plane %s Cut %d", hist_params[i_hist].yaxis.c_str(), plane_names[i_plane].c_str(), i_cut));
+        gr->GetXaxis()->SetTitle("GEM Gain (V)");
+        gr->GetYaxis()->SetTitle(hist_params[i_hist].yaxis.c_str());
 
-        g_peak->Write("g_peak");
-        g_window->Write("g_window");
-        g_bkd_no_window->Write("g_bkd_no_window");
-        g_peak_bkd_sub->Write("g_peak_bkd_sub");
-        g_window_bkd_sub->Write("g_window_bkd_sub");
+        // TString dirName = Form("%s/%s/cut%d", hist_params[i_hist].name.c_str(), plane_names[i_plane].c_str(), i_cut);
+        TString dirName = Form(hist_params[i_hist].name.c_str(), plane_names[i_plane].c_str(), cut_values[i_cut],
+                               cut_values[i_cut], cut_values[i_cut], cut_values[i_cut], plane_names[i_plane].c_str());
 
-        // Clean up
-        delete g_peak;
-        delete g_window;
-        delete g_bkd_no_window;
-        delete g_peak_bkd_sub;
-        delete g_window_bkd_sub;
+        TString dirNameStr = dirName;
+        Ssiz_t lastSlash   = dirNameStr.Last('/');
+        TString histName;
+        if (lastSlash != kNPOS) {
+          histName = dirNameStr(lastSlash + 1, dirNameStr.Length() - lastSlash - 1);
+          dirNameStr.Remove(lastSlash); // Remove last directory
+        } else {
+          histName   = dirNameStr;
+          dirNameStr = "";
+        }
+        if (!outFile->GetDirectory(dirNameStr)) {
+          outFile->mkdir(dirNameStr);
+        }
+        outFile->cd(dirNameStr);
+        gr->SetTitle(histName);
+
+        // Set graph style
+        gr->SetMarkerStyle(kFullCircle);
+        gr->SetMarkerSize(1.2);
+        gr->SetLineWidth(2);
+        gr->Write(histName);
+        outFile->cd();
       }
     }
   }
+
   outFile->Close();
 }
