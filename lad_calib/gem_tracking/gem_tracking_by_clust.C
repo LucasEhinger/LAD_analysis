@@ -50,7 +50,8 @@ const hist_range time_diff(-2, 8, 100);
 const hist_range time_peak(1770, 1790, 100);
 const hist_range time_before(1700, 1750, 100);
 const hist_range time_after(1850, 1950, 100);
-const hist_range time_window_sig(1625, 1800, 100);
+// const hist_range time_window_sig(1625, 1800, 100);
+const hist_range time_window_sig(1675, 1750, 100);
 const hist_range time_window_bkd(1800, 1975, 100);
 
 int run_number = 300000;
@@ -67,9 +68,7 @@ const double DCA_YZ_MAX = 200.0; // Maximum DCA in YZ plane
 
 const double plane_theta[nPlanes] = {150.0, 150.0, 127.0, 127.0, 104.0}; // Angle in degrees
 const double plane_r[nPlanes]     = {615.0, 655.6, 523.0, 563.6, 615.0}; // Radius of the second point
-const int MINT_EVTS_PER_THREAD    = 10000;
-
-const bool use_projz = true; // Fix z position to GEM projz
+const int MINT_EVTS_PER_THREAD    = 30000;
 
 const double dx_min = -70.0;
 const double dx_max = 70.0;
@@ -97,13 +96,18 @@ template <typename T> double getBkdSubFactor(T *h_time_all, T *h_time_sig) {
     return 0; // No background subtraction if the same time is used for all hits
   } else {
     double D =
-        h_time_all->Integral(h_time_all->FindBin(time_window_sig.min), h_time_all->FindBin(time_window_sig.max) - 1);
+        h_time_all->Integral(h_time_all->FindBin(time_window_sig.min), h_time_all->FindBin(time_window_sig.max) - 1) /
+        (time_window_sig.max - time_window_sig.min);
     double C =
-        h_time_sig->Integral(h_time_sig->FindBin(time_window_sig.min), h_time_sig->FindBin(time_window_sig.max) - 1);
+        h_time_sig->Integral(h_time_sig->FindBin(time_window_sig.min), h_time_sig->FindBin(time_window_sig.max) - 1) /
+        (time_window_sig.max - time_window_sig.min);
     double A =
-        h_time_sig->Integral(h_time_sig->FindBin(time_window_bkd.min), h_time_sig->FindBin(time_window_bkd.max) - 1);
+        h_time_sig->Integral(h_time_sig->FindBin(time_window_bkd.min), h_time_sig->FindBin(time_window_bkd.max) - 1) /
+        (time_window_bkd.max - time_window_bkd.min);
     bkdSub_scale = (D - C) / (D - A);
   }
+  bkdSub_scale *= (time_window_sig.max - time_window_sig.min) /
+                  (time_window_bkd.max - time_window_bkd.min); // Adjust scale factor based on time window sizes
   return bkdSub_scale;
 }
 
@@ -298,14 +302,14 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
   Double_t trk_t[MAX_DATA], trk_dt[MAX_DATA];
   Double_t trk_x[2][MAX_DATA], trk_y[2][MAX_DATA], trk_z[2][MAX_DATA];
   Double_t trk_x_local[2][MAX_DATA], trk_y_local[2][MAX_DATA];
-  //LAD
+  // LAD
   Double_t tdc_time_btm[nPlanes][MAX_DATA_LAD], tdc_time_top[nPlanes][MAX_DATA_LAD];
   Double_t tdc_counter_btm[nPlanes][MAX_DATA_LAD], tdc_counter_top[nPlanes][MAX_DATA_LAD];
   Int_t nTracks, nTdcTopHits[nPlanes], nTdcBtmHits[nPlanes];
   Double_t vertex_x, vertex_y, vertex_z;
 
-  Double_t time_avg[nPlanes][MAX_DATA_LAD], time_avg_paddle[nPlanes][MAX_DATA_LAD], time_avg_ypos[nPlanes][MAX_DATA_LAD],
-      adc_amp_avg[nPlanes][MAX_DATA_LAD];
+  Double_t time_avg[nPlanes][MAX_DATA_LAD], time_avg_paddle[nPlanes][MAX_DATA_LAD],
+      time_avg_ypos[nPlanes][MAX_DATA_LAD], adc_amp_avg[nPlanes][MAX_DATA_LAD];
   Int_t nData_hodo[nPlanes];
 
   T->SetBranchStatus("*", 0);
@@ -419,10 +423,10 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
           }
         }
         if (min_diff_idx < 9999) {
-          hodo_hit_punchthrough_idx[plane][bar] =
+          hodo_hit_punchthrough_idx[plane][i_hit] =
               min_diff_idx; // Store the index of the matching hit in the punchthrough array
         } else {
-          hodo_hit_punchthrough_idx[plane][bar] = -999;
+          hodo_hit_punchthrough_idx[plane][i_hit] = -999;
         }
       }
     }
@@ -452,11 +456,10 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
         TVector3 hodo_pos = GetHodoHitPosition(paddle, i_plane);
         hodo_pos.SetY(time_avg_ypos[i_plane][i_hit]);
 
-        bool is_punchthrough = (hodo_hit_punchthrough_idx[matching_plane][paddle] != -999);
+        bool is_punchthrough = (hodo_hit_punchthrough_idx[i_plane][i_hit] != -999);
         double diff_time;
         if (is_punchthrough) {
-          diff_time =
-              time_avg[matching_plane][hodo_hit_punchthrough_idx[matching_plane][paddle]] - time_avg[i_plane][i_hit];
+          diff_time = time_avg[matching_plane][hodo_hit_punchthrough_idx[i_plane][i_hit]] - time_avg[i_plane][i_hit];
           if (fabs(diff_time) > 10)
             is_punchthrough = false; // Ignore very small time differences
         } else {
@@ -467,17 +470,16 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
         }
         if (i_plane / 2 < 2)
           diff_time += janky_diff_time_calib[i_plane / 2][paddle];
-        double pt1[2] = {3, 220};
+        double pt1[2] = {3, 300};
         double pt2[2] = {6, 0};
         double m      = (pt2[1] - pt1[1]) / (pt2[0] - pt1[0]);
         double b      = pt1[1] - m * pt1[0];
         // FIXME: This works, but could be made prettier
         bool is_proton = false;
         if (fabs(diff_time) < 10) {
-          double hodo_hit_adc_match = adc_amp_avg[i_plane][hodo_hit_punchthrough_idx[i_plane][paddle]];
-          is_proton                 = adc_amp_avg[i_plane][i_hit] > (m * diff_time + b);
+          is_proton = adc_amp_avg[i_plane][i_hit] > (m * diff_time + b);
           if (i_plane < matching_plane)
-            is_proton = adc_amp_avg[matching_plane][hodo_hit_punchthrough_idx[i_plane][paddle]] > (m * diff_time + b);
+            is_proton = adc_amp_avg[matching_plane][hodo_hit_punchthrough_idx[i_plane][i_hit]] > (m * diff_time + b);
         }
 
         int time_id;
@@ -1085,8 +1087,7 @@ void gem_tracking_by_clust(int run_number) {
   gROOT->SetBatch(kTRUE);
   ROOT::EnableThreadSafety();
   std::vector<TString> fileNames = {
-      Form("/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/"
-           "PRODUCTION/bad_timing/"
+      Form("/cache/hallc/c-lad/analysis/ehingerl/online_v1/"
            "LAD_COIN_%d_0_6_-1.root",
            run_number)
       // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22565_0_0_-1.root"
@@ -3040,8 +3041,6 @@ void gem_tracking_by_clust(int run_number) {
           Form("time/%s/cut_dx%d_dy%d/Diff_Times_BkdSub", plane_names[i_plane].c_str(), dx_cuts[i_cut], dy_cuts[i_cut]);
       string noSubDir =
           Form("time/%s/cut_dx%d_dy%d/Diff_Times", plane_names[i_plane].c_str(), dx_cuts[i_cut], dy_cuts[i_cut]);
-      double bkdSub_scale_init =
-          (time_window_sig.max - time_window_sig.min) / (time_window_bkd.max - time_window_bkd.min);
 
       drawBkdSubHistograms(hist_map_dxdy_cuts_vec[0]["h_hodo_time_diff_punchthrough"][i_cut][i_plane],
                            hist_map_dxdy_cuts_vec[0]["h_hodo_time_punchthrough"][i_cut][i_plane][kSIG],
