@@ -22,6 +22,7 @@ using namespace std;
 
 const int MAX_DATA     = 500;
 const int MAX_DATA_GEM = 3000;
+const int CACHE_SIZE   = 50 * 1024 * 1024; // 50 MB cache size
 
 struct hist_params {
   int NBINS;
@@ -51,8 +52,8 @@ const double ADC2NS = 0.0625; // ADC to ns conversion factor
 // const double ADC2PC = 0.1;   // ADC to percent conversion factor
 // const double ADC2mV = 0.1;  // ADC to mV conversion factor
 
-const int MINT_EVTS_PER_THREAD = 20000;
-const char spec_prefix         = 'H';
+const int MAX_EVTS_PER_THREAD = 20000;
+const char spec_prefix        = 'H';
 struct track_cut {
   double dTrkVert_cut;
   double dTrkHoriz_cut;
@@ -79,6 +80,14 @@ const int N_PADDLES                = 11;
 const string plane_names[N_PLANES] = {"000", "001", "100", "101", "200"};
 const int N_SIDES                  = 2;
 const string side_names[N_SIDES]   = {"Top", "Btm"};
+
+template <typename T> void add_branch(TTree *tree, const char *branch_name, T *branch_data) {
+  // Add a branch to the tree
+  tree->SetBranchAddress(branch_name, branch_data);
+  tree->AddBranchToCache(branch_name, kTRUE);
+  tree->SetBranchStatus(branch_name, 1); // Enable the branch
+  return;
+}
 
 template <typename HistType>
 void write_to_canvas(HistType *hist_arr_bar[N_PLANES][N_SIDES][N_PADDLES], TFile *file, TString dir, TString var_name,
@@ -270,96 +279,98 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
   Int_t nData_tdc[N_PLANES][N_SIDES];
   Double_t hodo_start_time, pTRIG1, pTRIG2, pTRIG3, pTRIG4, evtyp;
 
-  T->SetBranchAddress(Form("Ndata.%c.gem.trk.d0", spec_prefix), &nTracks);
-  T->SetBranchAddress(Form("Ndata.%c.ladkin.goodhit_trackid_0", spec_prefix), &nGoodHits);
-  T->SetBranchAddress(Form("%c.gem.trk.d0", spec_prefix), &trk_d0);
-  T->SetBranchAddress(Form("%c.gem.trk.d0_good", spec_prefix), &trk_d0_good);
-  T->SetBranchAddress(Form("%c.gem.trk.projz", spec_prefix), &trk_projz);
-  T->SetBranchAddress(Form("%c.gem.trk.x1_local", spec_prefix), &trk_xloc[0]);
-  T->SetBranchAddress(Form("%c.gem.trk.x2_local", spec_prefix), &trk_xloc[1]);
-  T->SetBranchAddress(Form("%c.gem.trk.y1_local", spec_prefix), &trk_yloc[0]);
-  T->SetBranchAddress(Form("%c.gem.trk.y2_local", spec_prefix), &trk_yloc[1]);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_trackid_0", spec_prefix), &kin_trackID_0);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_trackid_1", spec_prefix), &kin_trackID_1);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_plane_0", spec_prefix), &kin_plane_0);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_plane_1", spec_prefix), &kin_plane_1);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_paddle_0", spec_prefix), &kin_paddle_0);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_paddle_1", spec_prefix), &kin_paddle_1);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_hittime_0", spec_prefix), &kin_hittime_0);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_hittime_1", spec_prefix), &kin_hittime_1);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_tof_0", spec_prefix), &kin_hit_tof_0);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_tof_1", spec_prefix), &kin_hit_tof_1);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_hittheta_0", spec_prefix), &kin_hittheta_0);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_hittheta_1", spec_prefix), &kin_hittheta_1);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_hitphi_0", spec_prefix), &kin_hitphi_0);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_hitphi_1", spec_prefix), &kin_hitphi_1);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_hitedep_0", spec_prefix), &kin_hitedep_0);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_hitedep_1", spec_prefix), &kin_hitedep_1);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_dTrkHoriz_0", spec_prefix), &kin_dTrkHoriz_0);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_dTrkHoriz_1", spec_prefix), &kin_dTrkHoriz_1);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_dTrkVert_0", spec_prefix), &kin_dTrkVert_0);
-  T->SetBranchAddress(Form("%c.ladkin.goodhit_dTrkVert_1", spec_prefix), &kin_dTrkVert_1);
+  T->SetCacheSize(CACHE_SIZE);
+  T->SetBranchStatus("*", 0); // Disable all branches initially
 
-  T->SetBranchAddress(Form("%c.hod.starttime", spec_prefix), &hodo_start_time);
-  T->SetBranchAddress("T.hms.pTRIG1_tdcTime", &pTRIG1);
-  T->SetBranchAddress("T.hms.pTRIG2_tdcTime", &pTRIG2);
-  T->SetBranchAddress("T.hms.pTRIG3_tdcTime", &pTRIG3);
-  T->SetBranchAddress("T.hms.pTRIG4_tdcTime", &pTRIG4);
-  T->SetBranchAddress("g.evtyp", &evtyp);
+  add_branch(T, Form("Ndata.%c.gem.trk.d0", spec_prefix), &nTracks);
+  add_branch(T, Form("Ndata.%c.ladkin.goodhit_trackid_0", spec_prefix), &nGoodHits);
+  add_branch(T, Form("%c.gem.trk.d0", spec_prefix), &trk_d0);
+  add_branch(T, Form("%c.gem.trk.d0_good", spec_prefix), &trk_d0_good);
+  add_branch(T, Form("%c.gem.trk.projz", spec_prefix), &trk_projz);
+  add_branch(T, Form("%c.gem.trk.x1_local", spec_prefix), &trk_xloc[0]);
+  add_branch(T, Form("%c.gem.trk.x2_local", spec_prefix), &trk_xloc[1]);
+  add_branch(T, Form("%c.gem.trk.y1_local", spec_prefix), &trk_yloc[0]);
+  add_branch(T, Form("%c.gem.trk.y2_local", spec_prefix), &trk_yloc[1]);
+  add_branch(T, Form("%c.ladkin.goodhit_trackid_0", spec_prefix), &kin_trackID_0);
+  add_branch(T, Form("%c.ladkin.goodhit_trackid_1", spec_prefix), &kin_trackID_1);
+  add_branch(T, Form("%c.ladkin.goodhit_plane_0", spec_prefix), &kin_plane_0);
+  add_branch(T, Form("%c.ladkin.goodhit_plane_1", spec_prefix), &kin_plane_1);
+  add_branch(T, Form("%c.ladkin.goodhit_paddle_0", spec_prefix), &kin_paddle_0);
+  add_branch(T, Form("%c.ladkin.goodhit_paddle_1", spec_prefix), &kin_paddle_1);
+  add_branch(T, Form("%c.ladkin.goodhit_hittime_0", spec_prefix), &kin_hittime_0);
+  add_branch(T, Form("%c.ladkin.goodhit_hittime_1", spec_prefix), &kin_hittime_1);
+  add_branch(T, Form("%c.ladkin.goodhit_tof_0", spec_prefix), &kin_hit_tof_0);
+  add_branch(T, Form("%c.ladkin.goodhit_tof_1", spec_prefix), &kin_hit_tof_1);
+  add_branch(T, Form("%c.ladkin.goodhit_hittheta_0", spec_prefix), &kin_hittheta_0);
+  add_branch(T, Form("%c.ladkin.goodhit_hittheta_1", spec_prefix), &kin_hittheta_1);
+  add_branch(T, Form("%c.ladkin.goodhit_hitphi_0", spec_prefix), &kin_hitphi_0);
+  add_branch(T, Form("%c.ladkin.goodhit_hitphi_1", spec_prefix), &kin_hitphi_1);
+  add_branch(T, Form("%c.ladkin.goodhit_hitedep_0", spec_prefix), &kin_hitedep_0);
+  add_branch(T, Form("%c.ladkin.goodhit_hitedep_1", spec_prefix), &kin_hitedep_1);
+  add_branch(T, Form("%c.ladkin.goodhit_dTrkHoriz_0", spec_prefix), &kin_dTrkHoriz_0);
+  add_branch(T, Form("%c.ladkin.goodhit_dTrkHoriz_1", spec_prefix), &kin_dTrkHoriz_1);
+  add_branch(T, Form("%c.ladkin.goodhit_dTrkVert_0", spec_prefix), &kin_dTrkVert_0);
+  add_branch(T, Form("%c.ladkin.goodhit_dTrkVert_1", spec_prefix), &kin_dTrkVert_1);
+
+  add_branch(T, Form("%c.hod.starttime", spec_prefix), &hodo_start_time);
+  add_branch(T, "T.hms.pTRIG1_tdcTime", &pTRIG1);
+  add_branch(T, "T.hms.pTRIG2_tdcTime", &pTRIG2);
+  add_branch(T, "T.hms.pTRIG3_tdcTime", &pTRIG3);
+  add_branch(T, "T.hms.pTRIG4_tdcTime", &pTRIG4);
+  add_branch(T, "g.evtyp", &evtyp);
 
   for (int plane = 0; plane < N_PLANES; ++plane) {
     for (int side = 0; side < N_SIDES; ++side) {
-      T->SetBranchAddress(
-          Form("%c.ladhod.%s.%sTdcTimeRaw", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
-          &tdc_time[plane][side]);
-      T->SetBranchAddress(
+      add_branch(T,
+                 Form("%c.ladhod.%s.%sTdcTimeRaw", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
+                 &tdc_time[plane][side]);
+      add_branch(
+          T,
           Form("%c.ladhod.%s.Good%sTdcTimeUnCorr", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
           &tdc_time_UnCorr[plane][side]);
-      T->SetBranchAddress(
+      add_branch(
+          T,
           Form("%c.ladhod.%s.Good%sTdcTimeWalkCorr", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
           &tdc_time_TWCorr[plane][side]);
-      T->SetBranchAddress(
-          Form("%c.ladhod.%s.Good%sTdcTimeCorr", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
+      add_branch(
+          T, Form("%c.ladhod.%s.Good%sTdcTimeCorr", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
           &tdc_time_Corr[plane][side]);
-      T->SetBranchAddress(
-          Form("%c.ladhod.%s.%sAdcPulseTimeRaw", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
+      add_branch(
+          T, Form("%c.ladhod.%s.%sAdcPulseTimeRaw", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
           &adc_time[plane][side]);
-      T->SetBranchAddress(
-          Form("%c.ladhod.%s.Good%sAdcPulseTime", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
+      add_branch(
+          T, Form("%c.ladhod.%s.Good%sAdcPulseTime", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
           &adc_time_good[plane][side]);
-      T->SetBranchAddress(
-          Form("%c.ladhod.%s.%sAdcPulseAmp", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
-          &adc_amp[plane][side]);
-      T->SetBranchAddress(
-          Form("%c.ladhod.%s.Good%sAdcPulseAmp", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
+      add_branch(T,
+                 Form("%c.ladhod.%s.%sAdcPulseAmp", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
+                 &adc_amp[plane][side]);
+      add_branch(
+          T, Form("%c.ladhod.%s.Good%sAdcPulseAmp", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
           &adc_amp_good[plane][side]);
-      T->SetBranchAddress(
-          Form("%c.ladhod.%s.%sAdcPulseInt", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
-          &adc_int[plane][side]);
-      T->SetBranchAddress(
-          Form("%c.ladhod.%s.Good%sAdcPulseInt", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
+      add_branch(T,
+                 Form("%c.ladhod.%s.%sAdcPulseInt", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
+                 &adc_int[plane][side]);
+      add_branch(
+          T, Form("%c.ladhod.%s.Good%sAdcPulseInt", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
           &adc_int_good[plane][side]);
-      T->SetBranchAddress(
-          Form("%c.ladhod.%s.%sTdcCounter", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
-          &tdc_counter[plane][side]);
-      T->SetBranchAddress(
-          Form("%c.ladhod.%s.%sAdcCounter", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
-          &adc_counter[plane][side]);
-      T->SetBranchAddress(
-          Form("Ndata.%c.ladhod.%s.%sAdcCounter", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
+      add_branch(T,
+                 Form("%c.ladhod.%s.%sTdcCounter", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
+                 &tdc_counter[plane][side]);
+      add_branch(T,
+                 Form("%c.ladhod.%s.%sAdcCounter", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
+                 &adc_counter[plane][side]);
+      add_branch(
+          T, Form("Ndata.%c.ladhod.%s.%sAdcCounter", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
           &nData_adc[plane][side]);
-      T->SetBranchAddress(
-          Form("Ndata.%c.ladhod.%s.%sTdcCounter", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
+      add_branch(
+          T, Form("Ndata.%c.ladhod.%s.%sTdcCounter", spec_prefix, plane_names[plane].c_str(), side_names[side].c_str()),
           &nData_tdc[plane][side]);
     }
-    T->SetBranchAddress(Form("%c.ladhod.%s.HodoHitTime", spec_prefix, plane_names[plane].c_str()),
-                        &fullhit_time_avg[plane]);
-    T->SetBranchAddress(Form("%c.ladhod.%s.HodoHitEdep", spec_prefix, plane_names[plane].c_str()),
-                        &fullhit_adc_avg[plane]);
-    T->SetBranchAddress(Form("%c.ladhod.%s.HodoHitPaddleNum", spec_prefix, plane_names[plane].c_str()),
-                        &fullhit_paddle[plane]);
-    T->SetBranchAddress(Form("Ndata.%c.ladhod.%s.HodoHitTime", spec_prefix, plane_names[plane].c_str()),
-                        &fullhit_n[plane]);
+    add_branch(T, Form("%c.ladhod.%s.HodoHitTime", spec_prefix, plane_names[plane].c_str()), &fullhit_time_avg[plane]);
+    add_branch(T, Form("%c.ladhod.%s.HodoHitEdep", spec_prefix, plane_names[plane].c_str()), &fullhit_adc_avg[plane]);
+    add_branch(T, Form("%c.ladhod.%s.HodoHitPaddleNum", spec_prefix, plane_names[plane].c_str()),
+               &fullhit_paddle[plane]);
+    add_branch(T, Form("Ndata.%c.ladhod.%s.HodoHitTime", spec_prefix, plane_names[plane].c_str()), &fullhit_n[plane]);
   }
   ////////////////////////////////////////////////////
   // Start Event Loop
@@ -546,8 +557,8 @@ void hodo_timing_plots() {
   int chunkSize = nEntries / numThreads;
 
   // Adjust the number of threads if the chunk size is too small
-  if (chunkSize < MINT_EVTS_PER_THREAD) {
-    numThreads = std::max(1, nEntries / MINT_EVTS_PER_THREAD);
+  if (chunkSize < MAX_EVTS_PER_THREAD) {
+    numThreads = std::max(1, nEntries / MAX_EVTS_PER_THREAD);
     chunkSize  = nEntries / numThreads;
   }
 

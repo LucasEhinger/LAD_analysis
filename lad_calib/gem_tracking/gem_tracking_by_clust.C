@@ -29,7 +29,7 @@ const int nFixedz              = 3;
 const double target_z[nFixedz] = {-10.0, 0.0, 10.0}; // Fixed z positions for the planes
 
 const double TDC2NS     = 0.09766; // ns per TDC channel
-const char spect_prefix = 'H';     // Spectrometer prefix, 'H' or 'P'
+const char spect_prefix = 'P';     // Spectrometer prefix, 'H' or 'P'
 
 struct hist_range {
   double min;
@@ -51,8 +51,13 @@ const hist_range time_peak(1770, 1790, 100);
 const hist_range time_before(1700, 1750, 100);
 const hist_range time_after(1850, 1950, 100);
 // const hist_range time_window_sig(1625, 1800, 100);
-const hist_range time_window_sig(1675, 1750, 100);
-const hist_range time_window_bkd(1800, 1975, 100);
+
+// First GEM window
+// const hist_range time_window_sig(1675, 1750, 100);
+// const hist_range time_window_bkd(1800, 1975, 100);
+// Second GEM window
+const hist_range time_window_sig(1680, 1740, 100);
+const hist_range time_window_bkd(1890, 2000, 100);
 
 int run_number = 300000;
 
@@ -68,7 +73,8 @@ const double DCA_YZ_MAX = 200.0; // Maximum DCA in YZ plane
 
 const double plane_theta[nPlanes] = {150.0, 150.0, 127.0, 127.0, 104.0}; // Angle in degrees
 const double plane_r[nPlanes]     = {615.0, 655.6, 523.0, 563.6, 615.0}; // Radius of the second point
-const int MINT_EVTS_PER_THREAD    = 30000;
+const int MAX_EVTS_PER_THREAD     = 30000;
+const int CACHE_SIZE              = 300 * 1024 * 1024; // 300 MB cache size
 
 const double dx_min = -70.0;
 const double dx_max = 70.0;
@@ -87,8 +93,18 @@ double gem_r[2]  = {77.571, 95.571}; // Radius of the GEM's
 double gem_dx[2] = {0.0, 0.0};       // GEM dx offsets
 double gem_dy[2] = {0.0, 0.0};       // GEM dy offsets
 
-const double janky_diff_time_calib[2][nPaddles] = {{-0.25, 0.4, -1.6, 0.5, 0.7, -1.5, 0, 0.6, 0.3, 1, 0.7},
-                                                   {1.1, 0.2, -0.1, -0.4, -0.9, 2, -0.7, -0.2, 0.25, 2, -0.3}};
+// const double janky_diff_time_calib[2][nPaddles] = {{-0.25, 0.4, -1.6, 0.5, 0.7, -1.5, 0, 0.6, 0.3, 1, 0.7},
+//                                                    {1.1, 0.2, -0.1, -0.4, -0.9, 2, -0.7, -0.2, 0.25, 2, -0.3}};
+
+const double janky_diff_time_calib[2][nPaddles] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                                                   {0, -6, 0, 0, 0, 0, 0, 0, 0, -3.5, 0}};
+
+template <typename T> void add_branch(TChain *tree, const char *branch_name, T *branch_data) {
+  // Add a branch to the tree
+  tree->SetBranchAddress(branch_name, branch_data);
+  tree->AddBranchToCache(branch_name, kTRUE);
+  tree->SetBranchStatus(branch_name, 1); // Enable the branch
+}
 
 template <typename T> double getBkdSubFactor(T *h_time_all, T *h_time_sig) {
   double bkdSub_scale = 1.0; // Default scale factor for background subtraction
@@ -313,51 +329,51 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
   Int_t nData_hodo[nPlanes];
 
   T->SetBranchStatus("*", 0);
-  T->SetBranchAddress(Form("Ndata.%c.gem.clust.pos", spect_prefix), &nData_clust);
-  T->SetBranchAddress(Form("%c.gem.clust.pos", spect_prefix), &clust_pos);
-  T->SetBranchAddress(Form("%c.gem.clust.layer", spect_prefix), &clust_layer);
-  T->SetBranchAddress(Form("%c.gem.clust.axis", spect_prefix), &clust_axis);
-  T->SetBranchAddress(Form("%c.gem.clust.adc", spect_prefix), &clust_adc);
-  T->SetBranchAddress(Form("Ndata.%c.gem.sp.posX", spect_prefix), &nData_sp);
-  T->SetBranchAddress(Form("%c.gem.sp.posX", spect_prefix), &sp_X);
-  T->SetBranchAddress(Form("%c.gem.sp.posY", spect_prefix), &sp_Y);
-  T->SetBranchAddress(Form("%c.gem.sp.posZ", spect_prefix), &sp_Z);
-  T->SetBranchAddress(Form("%c.gem.sp.layer", spect_prefix), &sp_layer);
-  T->SetBranchAddress(Form("%c.gem.sp.adc", spect_prefix), &sp_adc);
-  T->SetBranchAddress(Form("Ndata.%c.gem.trk.d0", spect_prefix), &nTracks);
-  T->SetBranchAddress(Form("%c.gem.trk.d0", spect_prefix), &trk_d0);
-  T->SetBranchAddress(Form("%c.gem.trk.d0_good", spect_prefix), &trk_d0_good);
-  T->SetBranchAddress(Form("%c.gem.trk.projz", spect_prefix), &trk_projz);
-  T->SetBranchAddress(Form("%c.gem.trk.projy", spect_prefix), &trk_projy);
-  T->SetBranchAddress(Form("%c.gem.trk.x1", spect_prefix), &trk_x[0]);
-  T->SetBranchAddress(Form("%c.gem.trk.y1", spect_prefix), &trk_y[0]);
-  T->SetBranchAddress(Form("%c.gem.trk.z1", spect_prefix), &trk_z[0]);
-  T->SetBranchAddress(Form("%c.gem.trk.x2", spect_prefix), &trk_x[1]);
-  T->SetBranchAddress(Form("%c.gem.trk.y2", spect_prefix), &trk_y[1]);
-  T->SetBranchAddress(Form("%c.gem.trk.z2", spect_prefix), &trk_z[1]);
-  T->SetBranchAddress(Form("%c.gem.trk.x1_local", spect_prefix), &trk_x_local[0]);
-  T->SetBranchAddress(Form("%c.gem.trk.y1_local", spect_prefix), &trk_y_local[0]);
-  T->SetBranchAddress(Form("%c.gem.trk.x2_local", spect_prefix), &trk_x_local[1]);
-  T->SetBranchAddress(Form("%c.gem.trk.y2_local", spect_prefix), &trk_y_local[1]);
-  T->SetBranchAddress(Form("%c.gem.trk.t", spect_prefix), &trk_t);
-  T->SetBranchAddress(Form("%c.gem.trk.dt", spect_prefix), &trk_dt);
-  T->SetBranchAddress(Form("%c.react.x", spect_prefix), &vertex_x);
-  T->SetBranchAddress(Form("%c.react.y", spect_prefix), &vertex_y);
-  T->SetBranchAddress(Form("%c.react.z", spect_prefix), &vertex_z);
+  T->SetCacheSize(CACHE_SIZE);
+  add_branch(T, Form("Ndata.%c.gem.clust.pos", spect_prefix), &nData_clust);
+  add_branch(T, Form("%c.gem.clust.pos", spect_prefix), &clust_pos);
+  add_branch(T, Form("%c.gem.clust.layer", spect_prefix), &clust_layer);
+  add_branch(T, Form("%c.gem.clust.axis", spect_prefix), &clust_axis);
+  add_branch(T, Form("%c.gem.clust.adc", spect_prefix), &clust_adc);
+  add_branch(T, Form("Ndata.%c.gem.sp.posX", spect_prefix), &nData_sp);
+  add_branch(T, Form("%c.gem.sp.posX", spect_prefix), &sp_X);
+  add_branch(T, Form("%c.gem.sp.posY", spect_prefix), &sp_Y);
+  add_branch(T, Form("%c.gem.sp.posZ", spect_prefix), &sp_Z);
+  add_branch(T, Form("%c.gem.sp.layer", spect_prefix), &sp_layer);
+  add_branch(T, Form("%c.gem.sp.adc", spect_prefix), &sp_adc);
+  add_branch(T, Form("Ndata.%c.gem.trk.d0", spect_prefix), &nTracks);
+  add_branch(T, Form("%c.gem.trk.d0", spect_prefix), &trk_d0);
+  add_branch(T, Form("%c.gem.trk.d0_good", spect_prefix), &trk_d0_good);
+  add_branch(T, Form("%c.gem.trk.projz", spect_prefix), &trk_projz);
+  add_branch(T, Form("%c.gem.trk.projy", spect_prefix), &trk_projy);
+  add_branch(T, Form("%c.gem.trk.x1", spect_prefix), &trk_x[0]);
+  add_branch(T, Form("%c.gem.trk.y1", spect_prefix), &trk_y[0]);
+  add_branch(T, Form("%c.gem.trk.z1", spect_prefix), &trk_z[0]);
+  add_branch(T, Form("%c.gem.trk.x2", spect_prefix), &trk_x[1]);
+  add_branch(T, Form("%c.gem.trk.y2", spect_prefix), &trk_y[1]);
+  add_branch(T, Form("%c.gem.trk.z2", spect_prefix), &trk_z[1]);
+  add_branch(T, Form("%c.gem.trk.x1_local", spect_prefix), &trk_x_local[0]);
+  add_branch(T, Form("%c.gem.trk.y1_local", spect_prefix), &trk_y_local[0]);
+  add_branch(T, Form("%c.gem.trk.x2_local", spect_prefix), &trk_x_local[1]);
+  add_branch(T, Form("%c.gem.trk.y2_local", spect_prefix), &trk_y_local[1]);
+  add_branch(T, Form("%c.gem.trk.t", spect_prefix), &trk_t);
+  add_branch(T, Form("%c.gem.trk.dt", spect_prefix), &trk_dt);
+  add_branch(T, Form("%c.react.x", spect_prefix), &vertex_x);
+  add_branch(T, Form("%c.react.y", spect_prefix), &vertex_y);
+  add_branch(T, Form("%c.react.z", spect_prefix), &vertex_z);
 
   for (int i = 0; i < nPlanes; ++i) {
-    T->SetBranchAddress(Form("%c.ladhod.%s.BtmTdcTimeRaw", spect_prefix, plane_names[i].c_str()), &tdc_time_btm[i]);
-    T->SetBranchAddress(Form("%c.ladhod.%s.BtmTdcCounter", spect_prefix, plane_names[i].c_str()), &tdc_counter_btm[i]);
-    T->SetBranchAddress(Form("%c.ladhod.%s.TopTdcTimeRaw", spect_prefix, plane_names[i].c_str()), &tdc_time_top[i]);
-    T->SetBranchAddress(Form("%c.ladhod.%s.TopTdcCounter", spect_prefix, plane_names[i].c_str()), &tdc_counter_top[i]);
-    T->SetBranchAddress(Form("Ndata.%c.ladhod.%s.BtmTdcTime", spect_prefix, plane_names[i].c_str()), &nTdcBtmHits[i]);
-    T->SetBranchAddress(Form("Ndata.%c.ladhod.%s.TopTdcTime", spect_prefix, plane_names[i].c_str()), &nTdcTopHits[i]);
-    T->SetBranchAddress(Form("%c.ladhod.%s.HodoHitTime", spect_prefix, plane_names[i].c_str()), &time_avg[i]);
-    T->SetBranchAddress(Form("%c.ladhod.%s.HodoHitPaddleNum", spect_prefix, plane_names[i].c_str()),
-                        &time_avg_paddle[i]);
-    T->SetBranchAddress(Form("Ndata.%c.ladhod.%s.HodoHitTime", spect_prefix, plane_names[i].c_str()), &nData_hodo[i]);
-    T->SetBranchAddress(Form("%c.ladhod.%s.HodoHitPos", spect_prefix, plane_names[i].c_str()), &time_avg_ypos[i]);
-    T->SetBranchAddress(Form("%c.ladhod.%s.HodoHitEdepAmp", spect_prefix, plane_names[i].c_str()), &adc_amp_avg[i]);
+    add_branch(T, Form("%c.ladhod.%s.BtmTdcTimeRaw", spect_prefix, plane_names[i].c_str()), &tdc_time_btm[i]);
+    add_branch(T, Form("%c.ladhod.%s.BtmTdcCounter", spect_prefix, plane_names[i].c_str()), &tdc_counter_btm[i]);
+    add_branch(T, Form("%c.ladhod.%s.TopTdcTimeRaw", spect_prefix, plane_names[i].c_str()), &tdc_time_top[i]);
+    add_branch(T, Form("%c.ladhod.%s.TopTdcCounter", spect_prefix, plane_names[i].c_str()), &tdc_counter_top[i]);
+    add_branch(T, Form("Ndata.%c.ladhod.%s.BtmTdcTime", spect_prefix, plane_names[i].c_str()), &nTdcBtmHits[i]);
+    add_branch(T, Form("Ndata.%c.ladhod.%s.TopTdcTime", spect_prefix, plane_names[i].c_str()), &nTdcTopHits[i]);
+    add_branch(T, Form("%c.ladhod.%s.HodoHitTime", spect_prefix, plane_names[i].c_str()), &time_avg[i]);
+    add_branch(T, Form("%c.ladhod.%s.HodoHitPaddleNum", spect_prefix, plane_names[i].c_str()), &time_avg_paddle[i]);
+    add_branch(T, Form("Ndata.%c.ladhod.%s.HodoHitTime", spect_prefix, plane_names[i].c_str()), &nData_hodo[i]);
+    add_branch(T, Form("%c.ladhod.%s.HodoHitPos", spect_prefix, plane_names[i].c_str()), &time_avg_ypos[i]);
+    add_branch(T, Form("%c.ladhod.%s.HodoHitEdepAmp", spect_prefix, plane_names[i].c_str()), &adc_amp_avg[i]);
   }
   //////////////////////////////////////////////////////////
   // Loop over the entries in the chunk
@@ -470,8 +486,8 @@ void process_chunk(int thread_id, int start, int end, std::vector<TString> &file
         }
         if (i_plane / 2 < 2)
           diff_time += janky_diff_time_calib[i_plane / 2][paddle];
-        double pt1[2] = {3, 300};
-        double pt2[2] = {6, 0};
+        double pt1[2] = {2, 300};
+        double pt2[2] = {5, 0};
         double m      = (pt2[1] - pt1[1]) / (pt2[0] - pt1[0]);
         double b      = pt1[1] - m * pt1[0];
         // FIXME: This works, but could be made prettier
@@ -1087,9 +1103,11 @@ void gem_tracking_by_clust(int run_number) {
   gROOT->SetBatch(kTRUE);
   ROOT::EnableThreadSafety();
   std::vector<TString> fileNames = {
-      Form("/cache/hallc/c-lad/analysis/ehingerl/online_v1/"
-           "LAD_COIN_%d_0_6_-1.root",
-           run_number)
+      //  Form("/cache/hallc/c-lad/analysis/ehingerl/online_v1/"
+      //       "LAD_COIN_%d_0_6_-1.root",
+      //       run_number),
+      Form("/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/to_cache/LAD_COIN_%d_0_6_-1.root",
+           run_number),
       // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22565_0_0_-1.root"
       // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_296_0_0_-1.root"
       // "LAD_COIN_22282_-1_inverted.root",
@@ -1131,8 +1149,8 @@ void gem_tracking_by_clust(int run_number) {
   int chunkSize = nEntries / numThreads;
 
   // Adjust the number of threads if the chunk size is too small
-  if (chunkSize < MINT_EVTS_PER_THREAD) {
-    numThreads = std::max(1, nEntries / MINT_EVTS_PER_THREAD);
+  if (chunkSize < MAX_EVTS_PER_THREAD) {
+    numThreads = std::max(1, nEntries / MAX_EVTS_PER_THREAD);
     chunkSize  = nEntries / numThreads;
   }
   // numThreads = 1;
