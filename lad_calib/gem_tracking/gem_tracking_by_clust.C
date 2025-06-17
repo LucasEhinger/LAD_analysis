@@ -101,9 +101,9 @@ const double janky_diff_time_calib[2][nPaddles] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 
 template <typename T> void add_branch(TChain *tree, const char *branch_name, T *branch_data) {
   // Add a branch to the tree
+  tree->SetBranchStatus(branch_name, 1); // Enable the branch
   tree->SetBranchAddress(branch_name, branch_data);
   tree->AddBranchToCache(branch_name, kTRUE);
-  tree->SetBranchStatus(branch_name, 1); // Enable the branch
 }
 
 template <typename T> double getBkdSubFactor(T *h_time_all, T *h_time_sig) {
@@ -1106,8 +1106,7 @@ void gem_tracking_by_clust(int run_number) {
       //  Form("/cache/hallc/c-lad/analysis/ehingerl/online_v1/"
       //       "LAD_COIN_%d_0_6_-1.root",
       //       run_number),
-      Form("/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/to_cache/LAD_COIN_%d_0_6_-1.root",
-           run_number),
+      Form("/cache/hallc/c-lad/analysis/ehingerl/online_v1/LAD_COIN_%d_0_6_-1.root", run_number),
       // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22565_0_0_-1.root"
       // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_296_0_0_-1.root"
       // "LAD_COIN_22282_-1_inverted.root",

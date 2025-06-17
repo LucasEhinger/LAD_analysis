@@ -130,10 +130,13 @@ void analyze_gain_scan_by_clust() {
 
   // map<int, double> run_gain_map = {{23105, 3190}, {23106, 3232}, {23107, 3272}, {23108, 3314}};
 
-  map<int, double> run_gain_map = {{22609, 2946}, {22610, 3027}, {22611, 3109}, {22613, 3154}, {22614, 3190},
-                                   {22615, 3232}, {23105, 3190}, {23106, 3232}, {23107, 3272}, {23108, 3314}};
+  // map<int, double> run_gain_map = {{22609, 2946}, {22610, 3027}, {22611, 3109}, {22613, 3154},
+  //                                  {22614, 3190}, {22615, 3232}, {23105, 3190}, {23106, 3232},
+  //                                  {23107, 3272}, {23108, 3314}, {23109, 3354}};
 
-  char spec_prefix = 'H';
+  map<int, double> run_gain_map = {{23105, 3190}, {23106, 3232}, {23107, 3272}, {23108, 3314},{23109, 3354}};
+
+  char spec_prefix = 'P';
   TString file_prefix =
       "/home/ehingerl/hallc/analysis/lad_calib/gem_tracking/files/tracking_gem/tracking_gem_%d_-1_%c.root";
 
@@ -219,7 +222,7 @@ void analyze_gain_scan_by_clust() {
 
   // Create output file
   cout << "Creating output file..." << endl;
-  TFile *outFile = new TFile("files/gain_scan_clust/gain_scan_graphs_all.root", "RECREATE");
+  TFile *outFile = new TFile("files/gain_scan_clust/gain_scan_graphs_all_P.root", "RECREATE");
 
   for (int i_hist = 0; i_hist < nHists; ++i_hist) {
     for (int i_plane = 0; i_plane < nPlanes; ++i_plane) {
@@ -227,6 +230,7 @@ void analyze_gain_scan_by_clust() {
         vector<double> x_vals_1, y_vals_1;
         vector<double> x_vals_2, y_vals_2;
         bool is_scan_1 = true;
+        // is_scan_1=false;
         for (const auto &run_gain : run_gain_map) {
           int run     = run_gain.first;
           double gain = run_gain.second;
@@ -239,9 +243,9 @@ void analyze_gain_scan_by_clust() {
               x_vals_2.push_back(gain);
               y_vals_2.push_back(it->second);
             }
-            if (run_gain.second == 3232) {
-              is_scan_1 = false; // Skip runs outside the range
-            }
+            // if (run_gain.second == 3232) {
+            //   is_scan_1 = false; // Skip runs outside the range
+            // }
           }
         }
         if (x_vals_1.empty())

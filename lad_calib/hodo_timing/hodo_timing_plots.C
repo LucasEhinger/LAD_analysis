@@ -83,9 +83,9 @@ const string side_names[N_SIDES]   = {"Top", "Btm"};
 
 template <typename T> void add_branch(TTree *tree, const char *branch_name, T *branch_data) {
   // Add a branch to the tree
+  tree->SetBranchStatus(branch_name, 1); // Enable the branch
   tree->SetBranchAddress(branch_name, branch_data);
   tree->AddBranchToCache(branch_name, kTRUE);
-  tree->SetBranchStatus(branch_name, 1); // Enable the branch
   return;
 }
 
