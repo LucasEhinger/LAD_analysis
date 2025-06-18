@@ -14,6 +14,7 @@
 #include <TLegendEntry.h>
 #include <TROOT.h>
 #include <TTree.h>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -21,9 +22,8 @@
 
 using namespace std;
 
-const int MAX_DATA     = 500;
-const int MAX_DATA_GEM = 1000;
-const int CACHE_SIZE   = 100 * 1024 * 1024; // 100 MB cache size
+const int MAX_DATA   = 50;
+const int CACHE_SIZE = 100 * 1024 * 1024; // 100 MB cache size
 
 struct hist_params {
   int NBINS;
@@ -37,7 +37,8 @@ const hist_params tof_params  = {100, -300, 500};
 const double TDC2NS = 0.09766; // TDC to ns conversion factor
 const double ADC2NS = 0.0625;  // ADC to ns conversion factor
 
-const int MINT_EVTS_PER_THREAD = 10000;
+const int MINT_EVTS_PER_THREAD = 100000;
+bool process_by_file           = true;
 
 struct hit_cut {
   int n_bar_tolerance;
@@ -57,13 +58,26 @@ hit_cut hit_cuts[nHitCuts] = {{5, false, false, "All_Hits", true},
                               {0, false, true, "Anti-Matching_Hit_Tol_0", true},
                               {1, false, true, "Anti-Matching_Hit_Tol_1", false},
                               {2, false, true, "Anti-Matching_Hit_Tol_2", false}};
-const char spec_prefix     = 'P'; // Spectrometer to replay
+const char spec_prefix     = 'H'; // Spectrometer to replay
 
 const int N_PLANES                 = 5;
 const int N_PADDLES                = 11;
 const string plane_names[N_PLANES] = {"000", "001", "100", "101", "200"};
 const int N_SIDES                  = 2;
 const string side_names[N_SIDES]   = {"Top", "Btm"};
+
+std::vector<TString> get_file_names(const std::string &filename) {
+  std::vector<TString> fileNames;
+  std::ifstream infile(filename);
+  std::string line;
+  while (std::getline(infile, line)) {
+    // Skip empty lines and lines starting with '#'
+    if (line.empty() || line[0] == '#')
+      continue;
+    fileNames.push_back(TString(line));
+  }
+  return fileNames;
+}
 
 template <typename T> void add_branch(TTree *tree, const char *branch_name, T *branch_data) {
   // Add a branch to the tree
@@ -413,23 +427,6 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
     return;
   }
 
-  // Define arrays to hold the data
-  Double_t trk_d0[MAX_DATA_GEM];
-  Double_t trk_d0_good[MAX_DATA_GEM];
-  Double_t trk_projz[MAX_DATA_GEM];
-  Double_t trk_xloc[2][MAX_DATA_GEM], trk_yloc[2][MAX_DATA_GEM];
-  Double_t kin_trackID_0[MAX_DATA_GEM], kin_trackID_1[MAX_DATA_GEM];
-  Double_t kin_plane_0[MAX_DATA_GEM], kin_plane_1[MAX_DATA_GEM];
-  Double_t kin_paddle_0[MAX_DATA_GEM], kin_paddle_1[MAX_DATA_GEM];
-  Double_t kin_hittime_0[MAX_DATA_GEM], kin_hittime_1[MAX_DATA_GEM];
-  Double_t kin_hit_tof_0[MAX_DATA_GEM], kin_hit_tof_1[MAX_DATA_GEM];
-  Double_t kin_hittheta_0[MAX_DATA_GEM], kin_hittheta_1[MAX_DATA_GEM];
-  Double_t kin_hitphi_0[MAX_DATA_GEM], kin_hitphi_1[MAX_DATA_GEM];
-  Double_t kin_hitedep_0[MAX_DATA_GEM], kin_hitedep_1[MAX_DATA_GEM];
-  Double_t kin_dTrkHoriz_0[MAX_DATA_GEM], kin_dTrkHoriz_1[MAX_DATA_GEM];
-  Double_t kin_dTrkVert_0[MAX_DATA_GEM], kin_dTrkVert_1[MAX_DATA_GEM];
-  Int_t nTracks, nGoodHits;
-
   // Hodo-level data
   Double_t tdc_time[N_SIDES][N_PLANES][MAX_DATA];
   Double_t tdc_counter[N_SIDES][N_PLANES][MAX_DATA];
@@ -453,35 +450,6 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
 
   T->SetCacheSize(CACHE_SIZE);
   T->SetBranchStatus("*", 0); // Disable all branches initially
-  add_branch(T, Form("Ndata.%c.gem.trk.d0", spec_prefix), &nTracks);
-  add_branch(T, Form("Ndata.%c.ladkin.goodhit_trackid_0", spec_prefix), &nGoodHits);
-  add_branch(T, Form("%c.gem.trk.d0", spec_prefix), &trk_d0);
-  add_branch(T, Form("%c.gem.trk.d0_good", spec_prefix), &trk_d0_good);
-  add_branch(T, Form("%c.gem.trk.projz", spec_prefix), &trk_projz);
-  add_branch(T, Form("%c.gem.trk.x1_local", spec_prefix), &trk_xloc[0]);
-  add_branch(T, Form("%c.gem.trk.x2_local", spec_prefix), &trk_xloc[1]);
-  add_branch(T, Form("%c.gem.trk.y1_local", spec_prefix), &trk_yloc[0]);
-  add_branch(T, Form("%c.gem.trk.y2_local", spec_prefix), &trk_yloc[1]);
-  add_branch(T, Form("%c.ladkin.goodhit_trackid_0", spec_prefix), &kin_trackID_0);
-  add_branch(T, Form("%c.ladkin.goodhit_trackid_1", spec_prefix), &kin_trackID_1);
-  add_branch(T, Form("%c.ladkin.goodhit_plane_0", spec_prefix), &kin_plane_0);
-  add_branch(T, Form("%c.ladkin.goodhit_plane_1", spec_prefix), &kin_plane_1);
-  add_branch(T, Form("%c.ladkin.goodhit_paddle_0", spec_prefix), &kin_paddle_0);
-  add_branch(T, Form("%c.ladkin.goodhit_paddle_1", spec_prefix), &kin_paddle_1);
-  add_branch(T, Form("%c.ladkin.goodhit_hittime_0", spec_prefix), &kin_hittime_0);
-  add_branch(T, Form("%c.ladkin.goodhit_hittime_1", spec_prefix), &kin_hittime_1);
-  add_branch(T, Form("%c.ladkin.goodhit_tof_0", spec_prefix), &kin_hit_tof_0);
-  add_branch(T, Form("%c.ladkin.goodhit_tof_1", spec_prefix), &kin_hit_tof_1);
-  add_branch(T, Form("%c.ladkin.goodhit_hittheta_0", spec_prefix), &kin_hittheta_0);
-  add_branch(T, Form("%c.ladkin.goodhit_hittheta_1", spec_prefix), &kin_hittheta_1);
-  add_branch(T, Form("%c.ladkin.goodhit_hitphi_0", spec_prefix), &kin_hitphi_0);
-  add_branch(T, Form("%c.ladkin.goodhit_hitphi_1", spec_prefix), &kin_hitphi_1);
-  add_branch(T, Form("%c.ladkin.goodhit_hitedep_0", spec_prefix), &kin_hitedep_0);
-  add_branch(T, Form("%c.ladkin.goodhit_hitedep_1", spec_prefix), &kin_hitedep_1);
-  add_branch(T, Form("%c.ladkin.goodhit_dTrkHoriz_0", spec_prefix), &kin_dTrkHoriz_0);
-  add_branch(T, Form("%c.ladkin.goodhit_dTrkHoriz_1", spec_prefix), &kin_dTrkHoriz_1);
-  add_branch(T, Form("%c.ladkin.goodhit_dTrkVert_0", spec_prefix), &kin_dTrkVert_0);
-  add_branch(T, Form("%c.ladkin.goodhit_dTrkVert_1", spec_prefix), &kin_dTrkVert_1);
 
   add_branch(T, Form("%c.hod.starttime", spec_prefix), &hodo_start_time);
   add_branch(T, "T.hms.pTRIG1_tdcTime", &pTRIG1);
@@ -550,6 +518,10 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
   Bool_t has_hodo_hit_adc[N_SIDES][N_PLANES][N_PADDLES];
   ////////////////////////////////////////////////////
   // Start Event Loop
+
+  if (end < 1) {
+    end = T->GetEntries(); // If end is less than 1, set it to the total number of entries
+  }
 
   for (int i = start; i < end; ++i) {
     T->GetEntry(i);
@@ -632,13 +604,16 @@ int hodo_timing_raw_plots() {
   ROOT::EnableThreadSafety();
 
   // Open multiple ROOT files
-  std::vector<TString> fileNames = {
-      // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22591_0_2_-1.root"};
+  // std::vector<TString> fileNames = {
+  // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22591_0_2_-1.root"};
 
-      "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22572_0_6_2000000.root"};
+  // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22572_0_6_2000000.root"};
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22382_0_21_-1.root",
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22382_0_21_-1_1.root"};
-  TString outputFileName = Form("files/raw_hodo_timing_plots/raw_hodo_timing_plots_22572_%c.root", spec_prefix);
+  // std::vector<TString> fileNames = get_file_names("files/all_LD2_setting2_runlist.dat");
+  std::vector<TString> fileNames = get_file_names("files/all_C3_runlist.dat");
+
+  TString outputFileName = Form("files/raw_hodo_timing_plots/raw_hodo_timing_plots_C3_%c.root", spec_prefix);
 
   // Create a TChain to combine the trees from multiple files
   TChain *chain = new TChain("T");
@@ -665,8 +640,8 @@ int hodo_timing_raw_plots() {
 
   // Number of threads to use
   int numThreads = std::thread::hardware_concurrency();
-  // numThreads     = 1;
-  int chunkSize = nEntries / numThreads;
+  numThreads     = fileNames.size();
+  int chunkSize  = nEntries / numThreads;
 
   // Adjust the number of threads if the chunk size is too small
   if (chunkSize < MINT_EVTS_PER_THREAD) {
@@ -745,13 +720,51 @@ int hodo_timing_raw_plots() {
     return -1;
   }
 
+  if (numThreads < fileNames.size()) {
+    process_by_file = true;
+  }
+
+  // Helper lambda to format numbers with commas
+  auto format_with_commas = [](int64_t value) {
+    std::string num    = std::to_string(value);
+    int insertPosition = num.length() - 3;
+    while (insertPosition > 0) {
+      num.insert(insertPosition, ",");
+      insertPosition -= 3;
+    }
+    return num;
+  };
+
   // start threads
-  cout << "Starting " << numThreads << " threads..." << endl;
+  cout << "Starting " << numThreads << " threads for " << format_with_commas(nEntries) << " events." << endl;
+
   std::vector<std::thread> threads;
+  // Store per-thread file lists to ensure their lifetime matches the threads
+  std::vector<std::vector<TString>> thread_fileNames_vec(numThreads);
   for (int i_thread = 0; i_thread < numThreads; ++i_thread) {
-    int start = i_thread * chunkSize;
-    int end   = (i_thread == numThreads - 1) ? nEntries : start + chunkSize;
-    threads.emplace_back(process_chunk, i_thread, start, end, ref(fileNames), ref(hist_map_vec[i_thread]));
+    if (process_by_file) {
+      // If processing by file, assign each thread a file to process
+
+      // Assign each thread a subset of fileNames (split as evenly as possible)
+      size_t files_per_thread = fileNames.size() / numThreads;
+      size_t extra            = fileNames.size() % numThreads;
+      size_t start_idx        = i_thread * files_per_thread + std::min<size_t>(i_thread, extra);
+      size_t end_idx          = start_idx + files_per_thread + (i_thread < extra ? 1 : 0);
+      // cout << "Thread " << i_thread << " processing files from index " << start_idx << " to " << end_idx - 1
+      //      << std::endl;
+      thread_fileNames_vec[i_thread] = std::vector<TString>(fileNames.begin() + start_idx, fileNames.begin() + end_idx);
+      // for (size_t idx = start_idx; idx < end_idx; ++idx) {
+      //   std::cout << "Thread " << i_thread << " will process file: " << thread_fileNames_vec[i_thread][idx -
+      //   start_idx]
+      //             << std::endl;
+      // }
+      threads.emplace_back(process_chunk, i_thread, 0, -1, std::ref(thread_fileNames_vec[i_thread]),
+                           std::ref(hist_map_vec[i_thread]));
+    } else {
+      int start = i_thread * chunkSize;
+      int end   = (i_thread == numThreads - 1) ? nEntries : start + chunkSize;
+      threads.emplace_back(process_chunk, i_thread, start, end, ref(fileNames), ref(hist_map_vec[i_thread]));
+    }
   }
   // Wait for all threads to finish
   for (auto &thread : threads) {
@@ -805,9 +818,10 @@ int hodo_timing_raw_plots() {
                           Form("KIN/Time_Avg/%s", hit_cuts[i_hit_cut].cut_name.c_str()),
                           Form("Time_Avg_%s", hit_cuts[i_hit_cut].cut_name.c_str()),
                           hit_cuts[i_hit_cut].include_comp_plt);
-    write_to_canvas_plane(hist_map_vec[0]["h_ToF_bar"][i_hit_cut], outputFile,
-                          Form("KIN/ToF/%s", hit_cuts[i_hit_cut].cut_name.c_str()),
-                          Form("ToF_%s", hit_cuts[i_hit_cut].cut_name.c_str()), hit_cuts[i_hit_cut].include_comp_plt);
+    // write_to_canvas_plane(hist_map_vec[0]["h_ToF_bar"][i_hit_cut], outputFile,
+    //                       Form("KIN/ToF/%s", hit_cuts[i_hit_cut].cut_name.c_str()),
+    //                       Form("ToF_%s", hit_cuts[i_hit_cut].cut_name.c_str()),
+    //                       hit_cuts[i_hit_cut].include_comp_plt);
   }
 
   outputFile->Close();
