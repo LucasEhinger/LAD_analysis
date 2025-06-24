@@ -31,14 +31,16 @@ struct hist_params {
   double MAX;
 };
 
-const hist_params time_params = {100, 1700.0, 2000.0};
-const hist_params tof_params  = {100, -300, 500};
+const hist_params time_params = {70, 1725.0, 1825.0};
+const hist_params tof_params  = {70, 50, 150};
 
 const double TDC2NS = 0.09766; // TDC to ns conversion factor
 const double ADC2NS = 0.0625;  // ADC to ns conversion factor
 
 const int MINT_EVTS_PER_THREAD = 100000;
 bool process_by_file           = true;
+
+const double edep_cut = 100; // mV
 
 struct hit_cut {
   int n_bar_tolerance;
@@ -116,6 +118,7 @@ TLegend *make_legend(TCanvas *c) {
 template <typename HistType>
 void write_to_canvas_plane(HistType *hist_arr[N_PLANES][N_PADDLES], TFile *file, TString dir, TString var_name,
                            bool include_comp_plt = false) {
+  include_comp_plt = false;
   // Create and navigate to the directory
   file->mkdir(dir);
   file->cd(dir);
@@ -433,7 +436,7 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
   Double_t tdc_time_UnCorr[N_SIDES][N_PLANES][MAX_DATA], tdc_time_TWCorr[N_SIDES][N_PLANES][MAX_DATA],
       tdc_time_Corr[N_SIDES][N_PLANES][MAX_DATA];
   Double_t fullhit_time_avg[N_PLANES][MAX_DATA], fullhit_adc_avg[N_PLANES][MAX_DATA],
-      fullhit_paddle[N_PLANES][MAX_DATA];
+      fullhit_tof_avg[N_PLANES][MAX_DATA], fullhit_paddle[N_PLANES][MAX_DATA];
   Int_t fullhit_n[N_PLANES];
 
   Double_t adc_time[N_SIDES][N_PLANES][MAX_DATA];
@@ -507,7 +510,9 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
   }
   for (int plane = 0; plane < N_PLANES; ++plane) {
     add_branch(T, Form("%c.ladhod.%s.HodoHitTime", spec_prefix, plane_names[plane].c_str()), &fullhit_time_avg[plane]);
-    add_branch(T, Form("%c.ladhod.%s.HodoHitEdep", spec_prefix, plane_names[plane].c_str()), &fullhit_adc_avg[plane]);
+    add_branch(T, Form("%c.ladhod.%s.HodoHitTOF", spec_prefix, plane_names[plane].c_str()), &fullhit_tof_avg[plane]);
+    add_branch(T, Form("%c.ladhod.%s.HodoHitEdepAmp", spec_prefix, plane_names[plane].c_str()),
+               &fullhit_adc_avg[plane]);
     add_branch(T, Form("%c.ladhod.%s.HodoHitPaddleNum", spec_prefix, plane_names[plane].c_str()),
                &fullhit_paddle[plane]);
     add_branch(T, Form("Ndata.%c.ladhod.%s.HodoHitTime", spec_prefix, plane_names[plane].c_str()), &fullhit_n[plane]);
@@ -576,9 +581,45 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
       }
     }
 
+    // Calculate fullhit_tof_avg by subtracting hodo_start_time from fullhit_time_avg
+    Double_t fullhit_tof_trigger_avg[N_PLANES][MAX_DATA] = {-999};
+    for (int plane = 0; plane < N_PLANES; ++plane) {
+      for (int i_hit = 0; i_hit < fullhit_n[plane]; ++i_hit) {
+        fullhit_tof_trigger_avg[plane][i_hit] = fullhit_time_avg[plane][i_hit] - hodo_start_time + 60;
+      }
+    }
+
+    Double_t fullhit_time_avg_edepCut[N_PLANES][MAX_DATA]        = {-999};
+    Double_t fullhit_tof_avg_edepCut[N_PLANES][MAX_DATA]         = {-999};
+    Double_t fullhit_tof_trigger_avg_edepCut[N_PLANES][MAX_DATA] = {-999};
+    Int_t fullhit_n_edepCut[N_PLANES]                            = {0};
+
+    for (int plane = 0; plane < N_PLANES; ++plane) {
+      fullhit_n_edepCut[plane] = 0;
+      for (int i_hit = 0; i_hit < fullhit_n[plane]; ++i_hit) {
+        if (fullhit_adc_avg[plane][i_hit] > edep_cut) {
+          int idx                                     = fullhit_n_edepCut[plane];
+          fullhit_time_avg_edepCut[plane][idx]        = fullhit_time_avg[plane][i_hit];
+          fullhit_tof_avg_edepCut[plane][idx]         = fullhit_tof_avg[plane][i_hit];
+          fullhit_tof_trigger_avg_edepCut[plane][idx] = fullhit_tof_trigger_avg[plane][i_hit];
+          fullhit_n_edepCut[plane]++;
+        }
+      }
+    }
+
     // Fill the histograms
+    make_matching_hit_histo(fullhit_n, fullhit_paddle, has_hodo_hit_avg, fullhit_tof_avg,
+                            hist_map_trk_cuts["h_ToF_bar"], -200, 500);
+    make_matching_hit_histo(fullhit_n_edepCut, fullhit_paddle, has_hodo_hit_avg, fullhit_tof_avg_edepCut,
+                            hist_map_trk_cuts["h_ToF_edepCut_bar"], -200, 500);
+    make_matching_hit_histo(fullhit_n, fullhit_paddle, has_hodo_hit_avg, fullhit_tof_trigger_avg,
+                            hist_map_trk_cuts["h_ToF_trigger_bar"], MIN_TDC_TIME, MAX_TDC_TIME);
+    make_matching_hit_histo(fullhit_n_edepCut, fullhit_paddle, has_hodo_hit_avg, fullhit_tof_trigger_avg_edepCut,
+                            hist_map_trk_cuts["h_ToF_trigger_edepCut_bar"], MIN_TDC_TIME, MAX_TDC_TIME);
     make_matching_hit_histo(fullhit_n, fullhit_paddle, has_hodo_hit_avg, fullhit_time_avg,
                             hist_map_trk_cuts["h_Time_Avg_bar"], MIN_TDC_TIME, MAX_TDC_TIME);
+    make_matching_hit_histo(fullhit_n_edepCut, fullhit_paddle, has_hodo_hit_avg, fullhit_time_avg_edepCut,
+                            hist_map_trk_cuts["h_Time_Avg_edepCut_bar"], MIN_TDC_TIME, MAX_TDC_TIME);
     make_matching_hit_histo(nData_tdc[0], tdc_counter[0], has_hodo_hit_tdc[0], tdc_time[0],
                             hist_map_trk_cuts["h_TDC_top_bar"], MIN_TDC_TIME, MAX_TDC_TIME);
     make_matching_hit_histo(nData_tdc[1], tdc_counter[1], has_hodo_hit_tdc[1], tdc_time[1],
@@ -611,9 +652,12 @@ int hodo_timing_raw_plots() {
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22382_0_21_-1.root",
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22382_0_21_-1_1.root"};
   // std::vector<TString> fileNames = get_file_names("files/all_LD2_setting2_runlist.dat");
-  std::vector<TString> fileNames = get_file_names("files/all_C3_runlist.dat");
+  // std::vector<TString> fileNames = get_file_names("files/all_C3_runlist.dat");
+  std::vector<TString> fileNames = get_file_names("files/LD2_setting1_new2.dat");
 
-  TString outputFileName = Form("files/raw_hodo_timing_plots/raw_hodo_timing_plots_C3_%c.root", spec_prefix);
+
+  // TString outputFileName = Form("files/raw_hodo_timing_plots/raw_hodo_timing_plots_C3_%c.root", spec_prefix);
+  TString outputFileName = Form("files/raw_hodo_timing_plots/raw_hodo_timing_plots_LD2_setting1_new2_%c.root", spec_prefix);
 
   // Create a TChain to combine the trees from multiple files
   TChain *chain = new TChain("T");
@@ -637,6 +681,7 @@ int hodo_timing_raw_plots() {
 
   // Number of entries in the TTree
   int nEntries = T->GetEntries();
+  // nEntries     = 10000;
 
   // Number of threads to use
   int numThreads = std::thread::hardware_concurrency();
@@ -708,6 +753,44 @@ int hodo_timing_raw_plots() {
                        tof_params.NBINS, tof_params.MIN, tof_params.MAX);
           hist_map_vec[thread]["h_ToF_bar"][i_hit_cut][plane][bar]->GetXaxis()->SetTitle("ToF (ns)");
           hist_map_vec[thread]["h_ToF_bar"][i_hit_cut][plane][bar]->GetYaxis()->SetTitle("Counts");
+
+          hist_map_vec[thread]["h_ToF_trigger_bar"][i_hit_cut][plane][bar] =
+              new TH1F(Form("h_ToF_trigger_bar_plane_%s_bar_%d_%s_thread_%d", plane_names[plane].c_str(), bar,
+                            hit_cuts[i_hit_cut].cut_name.c_str(), thread),
+                       Form("ToF Trigger Bar Plane %s Bar %d %s Thread %d", plane_names[plane].c_str(), bar,
+                            hit_cuts[i_hit_cut].cut_name.c_str(), thread),
+                       time_params.NBINS, time_params.MIN, time_params.MAX);
+          hist_map_vec[thread]["h_ToF_trigger_bar"][i_hit_cut][plane][bar]->GetXaxis()->SetTitle("ToF Trigger (ns)");
+          hist_map_vec[thread]["h_ToF_trigger_bar"][i_hit_cut][plane][bar]->GetYaxis()->SetTitle("Counts");
+
+          // Versions with edepCut before _bar
+          hist_map_vec[thread]["h_Time_Avg_edepCut_bar"][i_hit_cut][plane][bar] =
+              new TH1F(Form("h_Time_Avg_edepCut_plane_%s_bar_%d_%s_thread_%d", plane_names[plane].c_str(), bar,
+                            hit_cuts[i_hit_cut].cut_name.c_str(), thread),
+                       Form("Time Avg edepCut Plane %s Bar %d %s Thread %d", plane_names[plane].c_str(), bar,
+                            hit_cuts[i_hit_cut].cut_name.c_str(), thread),
+                       time_params.NBINS, time_params.MIN, time_params.MAX);
+          hist_map_vec[thread]["h_Time_Avg_edepCut_bar"][i_hit_cut][plane][bar]->GetXaxis()->SetTitle("Time Avg (ns)");
+          hist_map_vec[thread]["h_Time_Avg_edepCut_bar"][i_hit_cut][plane][bar]->GetYaxis()->SetTitle("Counts");
+
+          hist_map_vec[thread]["h_ToF_edepCut_bar"][i_hit_cut][plane][bar] =
+              new TH1F(Form("h_ToF_edepCut_plane_%s_bar_%d_%s_thread_%d", plane_names[plane].c_str(), bar,
+                            hit_cuts[i_hit_cut].cut_name.c_str(), thread),
+                       Form("ToF edepCut Plane %s Bar %d %s Thread %d", plane_names[plane].c_str(), bar,
+                            hit_cuts[i_hit_cut].cut_name.c_str(), thread),
+                       tof_params.NBINS, tof_params.MIN, tof_params.MAX);
+          hist_map_vec[thread]["h_ToF_edepCut_bar"][i_hit_cut][plane][bar]->GetXaxis()->SetTitle("ToF (ns)");
+          hist_map_vec[thread]["h_ToF_edepCut_bar"][i_hit_cut][plane][bar]->GetYaxis()->SetTitle("Counts");
+
+          hist_map_vec[thread]["h_ToF_trigger_edepCut_bar"][i_hit_cut][plane][bar] =
+              new TH1F(Form("h_ToF_trigger_edepCut_bar_plane_%s_bar_%d_%s_thread_%d", plane_names[plane].c_str(), bar,
+                            hit_cuts[i_hit_cut].cut_name.c_str(), thread),
+                       Form("ToF Trigger edepCut Bar Plane %s Bar %d %s Thread %d", plane_names[plane].c_str(), bar,
+                            hit_cuts[i_hit_cut].cut_name.c_str(), thread),
+                       time_params.NBINS, time_params.MIN, time_params.MAX);
+          hist_map_vec[thread]["h_ToF_trigger_edepCut_bar"][i_hit_cut][plane][bar]->GetXaxis()->SetTitle(
+              "ToF Trigger (ns)");
+          hist_map_vec[thread]["h_ToF_trigger_edepCut_bar"][i_hit_cut][plane][bar]->GetYaxis()->SetTitle("Counts");
         }
       }
     }
@@ -818,16 +901,31 @@ int hodo_timing_raw_plots() {
                           Form("KIN/Time_Avg/%s", hit_cuts[i_hit_cut].cut_name.c_str()),
                           Form("Time_Avg_%s", hit_cuts[i_hit_cut].cut_name.c_str()),
                           hit_cuts[i_hit_cut].include_comp_plt);
-    // write_to_canvas_plane(hist_map_vec[0]["h_ToF_bar"][i_hit_cut], outputFile,
-    //                       Form("KIN/ToF/%s", hit_cuts[i_hit_cut].cut_name.c_str()),
-    //                       Form("ToF_%s", hit_cuts[i_hit_cut].cut_name.c_str()),
-    //                       hit_cuts[i_hit_cut].include_comp_plt);
+    write_to_canvas_plane(hist_map_vec[0]["h_ToF_bar"][i_hit_cut], outputFile,
+                          Form("KIN/ToF/%s", hit_cuts[i_hit_cut].cut_name.c_str()),
+                          Form("ToF_%s", hit_cuts[i_hit_cut].cut_name.c_str()), hit_cuts[i_hit_cut].include_comp_plt);
+    write_to_canvas_plane(hist_map_vec[0]["h_ToF_trigger_bar"][i_hit_cut], outputFile,
+                          Form("KIN/ToF_Trigger/%s", hit_cuts[i_hit_cut].cut_name.c_str()),
+                          Form("ToF_Trigger_%s", hit_cuts[i_hit_cut].cut_name.c_str()),
+                          hit_cuts[i_hit_cut].include_comp_plt);
+    write_to_canvas_plane(hist_map_vec[0]["h_Time_Avg_edepCut_bar"][i_hit_cut], outputFile,
+                          Form("KIN/Time_Avg_edepCut/%s", hit_cuts[i_hit_cut].cut_name.c_str()),
+                          Form("Time_Avg_edepCut_%s", hit_cuts[i_hit_cut].cut_name.c_str()),
+                          hit_cuts[i_hit_cut].include_comp_plt);
+    write_to_canvas_plane(hist_map_vec[0]["h_ToF_edepCut_bar"][i_hit_cut], outputFile,
+                          Form("KIN/ToF_edepCut/%s", hit_cuts[i_hit_cut].cut_name.c_str()),
+                          Form("ToF_edepCut_%s", hit_cuts[i_hit_cut].cut_name.c_str()),
+                          hit_cuts[i_hit_cut].include_comp_plt);
+    write_to_canvas_plane(hist_map_vec[0]["h_ToF_trigger_edepCut_bar"][i_hit_cut], outputFile,
+                          Form("KIN/ToF_Trigger_edepCut/%s", hit_cuts[i_hit_cut].cut_name.c_str()),
+                          Form("ToF_Trigger_edepCut_%s", hit_cuts[i_hit_cut].cut_name.c_str()),
+                          hit_cuts[i_hit_cut].include_comp_plt);
   }
 
   outputFile->Close();
   delete outputFile;
 
-  std::cout << "Done! All histograms written to file. Cleaning up..." << std::endl;
+  std::cout << "Done! All histograms written to " << outputFileName << endl << "Cleaning up..." << std::endl;
 
   std::_Exit(0);
   // It feels overly brutal to do this, but deallocating memory takes hours, and it reclaimed when the program exits
