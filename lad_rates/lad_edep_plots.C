@@ -9,6 +9,7 @@
 #include <TH2.h>
 #include <TLegend.h>
 #include <TLegendEntry.h>
+#include <TLine.h>
 #include <TROOT.h>
 #include <TTree.h>
 #include <fstream>
@@ -22,6 +23,11 @@ using namespace std;
 const int MAX_DATA            = 100;
 const int CACHE_SIZE          = 200 * 1024 * 1024; // 200 MB cache size
 const int MAX_EVTS_PER_THREAD = 1000000;
+const int MAX_THREADS         = 200;  // Maximum number of threads to use
+const bool process_by_file    = true; // Process by file instead of by event
+
+const double pt1_protonCut[2] = {2, 300};
+const double pt2_protonCut[2] = {5, 0};
 
 struct hist_params {
   int NBINS;
@@ -30,7 +36,7 @@ struct hist_params {
 };
 
 const hist_params time_params    = {100, 1700.0, 2000.0};
-const hist_params dt_params      = {200, -2, 8};
+const hist_params dt_params      = {200, -2, 10};
 const hist_params adc_amp_params = {200, 0.0, 400.0};
 const hist_params adc_int_params = {200, 0.0, 40.0};
 
@@ -51,17 +57,30 @@ const string side_names[N_SIDES]   = {"Top", "Btm"};
 const double janky_diff_time_calib[2][N_PADDLES] = {{-0.25, 0.4, -1.6, 0.5, 0.7, -1.5, 0, 0.6, 0.3, 1, 0.7},
                                                     {1.1, 0.2, -0.1, -0.4, -0.9, 2, -0.7, -0.2, 0.25, 2, -0.3}};
 
-std::vector<TString> get_file_names(const std::string &filename) {
-  std::vector<TString> fileNames;
-  std::ifstream infile(filename);
-  std::string line;
-  while (std::getline(infile, line)) {
+vector<TString> get_file_names(const string &filename) {
+  vector<TString> fileNames;
+  ifstream infile(filename);
+  string line;
+  while (getline(infile, line)) {
     // Skip empty lines and lines starting with '#'
     if (line.empty() || line[0] == '#')
       continue;
     fileNames.push_back(TString(line));
   }
   return fileNames;
+}
+
+void kill_afterpulses(Double_t times[MAX_DATA], Int_t n_entries) {
+  // Remove afterpulses from the times array
+  for (Int_t i = 0; i < n_entries; ++i) {
+    for (Int_t j = 0; j < n_entries; ++j) {
+      if (i != j && abs(times[i] - times[j]) < 20 && times[i] > times[j]) {
+        // If the time difference is less than 10 ns, consider it an afterpulse
+        times[i] = -9999; // Mark as invalid
+        break;            // No need to check further for this entry
+      }
+    }
+  }
 }
 
 TLegend *make_legend(TCanvas *c) {
@@ -93,7 +112,8 @@ TLegend *make_legend(TCanvas *c) {
 
 template <typename HistType>
 void write_to_canvas_plane(HistType *hist_arr[N_PLANES][N_PADDLES], TFile *file, TString dir, TString var_name,
-                           bool include_comp_plt = false) {
+                           const double pt1[2] = nullptr, const double pt2[2] = nullptr) {
+  bool draw_line = (pt1 || pt2);
   // Create and navigate to the directory
   file->mkdir(dir);
   file->cd(dir);
@@ -107,6 +127,14 @@ void write_to_canvas_plane(HistType *hist_arr[N_PLANES][N_PADDLES], TFile *file,
     for (int bar = 0; bar < N_PADDLES; ++bar) {
       c1->cd(bar + 1);
       hist_arr[plane][bar]->Draw();
+      if (draw_line) {
+        // Draw the line on the histogram
+        TLine *line = new TLine(pt1[0], pt1[1], pt2[0], pt2[1]);
+        line->SetLineColor(kRed);
+        line->SetLineWidth(4);
+        line->Draw("same");
+        // Do not delete the line here; let ROOT manage its lifetime
+      }
     }
     c1->Write();
     delete c1;
@@ -163,7 +191,7 @@ template <typename T> void add_branch(TChain *tree, const char *branch_name, T *
   tree->AddBranchToCache(branch_name, kTRUE);
 }
 
-void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileNames,
+void process_chunk(int i_thread, int start, int end, vector<TString> &fileNames,
                    map<string, TH1 *[N_PLANES][N_PADDLES]> &hist_map) {
 
   TChain *T = new TChain("T");
@@ -172,7 +200,7 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
   }
 
   if (T->GetEntries() == 0) {
-    std::cerr << "Error: Cannot open the ROOT files or no entries in the TChain!" << std::endl;
+    cerr << "Error: Cannot open the ROOT files or no entries in the TChain!" << endl;
     return;
   }
 
@@ -207,6 +235,14 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
   Int_t hodo_hit_punchthrough_idx[N_PLANES][MAX_DATA];
   ////////////////////////////////////////////////////
   // Start Event Loop
+  int nentries = T->GetEntries();
+  if (end < 0 || end > nentries) {
+    end = nentries; // Adjust end if it exceeds the number of entries
+  }
+  for (int plane = 0; plane < N_PLANES; ++plane) {
+    kill_afterpulses(fullhit_time_avg[plane], fullhit_n[plane]);
+    // Should implement this in replay later, but works here for now
+  }
 
   for (int i = start; i < end; ++i) {
     T->GetEntry(i);
@@ -216,6 +252,8 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
     // Loop over the hits and fill the arrays
     for (int plane = 0; plane < N_PLANES; ++plane) {
       for (int i_hit = 0; i_hit < fullhit_n[plane]; ++i_hit) {
+        if (fullhit_time_avg[plane][i_hit] < MIN_TDC_TIME || fullhit_time_avg[plane][i_hit] > MAX_TDC_TIME)
+          continue; // Skip hits with invalid TDC times
         int bar = int(fullhit_paddle[plane][i_hit]) - 1;
         hist_map["h_time_avg"][plane][bar]->Fill(fullhit_time_avg[plane][i_hit]);
         hist_map["h_ADC_Int"][plane][bar]->Fill(fullhit_adc_avg[plane][i_hit]);
@@ -248,7 +286,8 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
         int min_diff_time = 9999;
         int min_diff_idx  = 9999;
         for (int j_hit = 0; j_hit < fullhit_n[matching_plane]; ++j_hit) {
-          int j_bar        = int(fullhit_time_avg[matching_plane][j_hit]) - 1;
+          if (fullhit_paddle[matching_plane][j_hit] != fullhit_paddle[plane][i_hit])
+            continue; // Only consider hits with the same paddle number
           double diff_time = fullhit_time_avg[matching_plane][j_hit] - fullhit_time_avg[plane][i_hit];
           if (fabs(diff_time) < min_diff_time) {
             min_diff_time = fabs(diff_time);
@@ -301,11 +340,11 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
         if (matching_plane < plane) {
           diff_time = -diff_time; // Adjust the time difference based on the plane order
         }
+        // if (plane / 2 < 2)
+        //   diff_time += janky_diff_time_calib[plane / 2][bar];
         // Apply Proton Cut
-        double pt1[2]  = {2, 300};
-        double pt2[2]  = {5, 0};
-        double m       = (pt2[1] - pt1[1]) / (pt2[0] - pt1[0]);
-        double b       = pt1[1] - m * pt1[0];
+        double m       = (pt2_protonCut[1] - pt1_protonCut[1]) / (pt2_protonCut[0] - pt1_protonCut[0]);
+        double b       = pt1_protonCut[1] - m * pt1_protonCut[0];
         bool is_proton = false;
         if (fabs(diff_time) < 10) {
           is_proton = fullhit_adc_amp_avg[plane][i_hit] > (m * diff_time + b);
@@ -314,13 +353,13 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
                 fullhit_adc_amp_avg[matching_plane][hodo_hit_punchthrough_idx[plane][i_hit]] > (m * diff_time + b);
         }
 
-        if (plane / 2 < 2)
-          diff_time += janky_diff_time_calib[plane / 2][bar];
         // Fill the histograms with the TDC difference
         hist_map["h_time_avg_punchthrough"][plane][bar]->Fill(fullhit_time_avg[plane][i_hit]);
-        hist_map["h_TDC_Diff_bar"][plane][bar]->Fill(diff_time);
-        hist_map["h_TDC_Diff_vs_ADC_Int"][plane][bar]->Fill(diff_time, fullhit_adc_avg[plane][i_hit]);
-        hist_map["h_TDC_Diff_vs_ADC_Amp"][plane][bar]->Fill(diff_time, fullhit_adc_amp_avg[plane][i_hit]);
+        if (is_punchthrough) {
+          hist_map["h_TDC_Diff_bar"][plane][bar]->Fill(diff_time);
+          hist_map["h_TDC_Diff_vs_ADC_Int"][plane][bar]->Fill(diff_time, fullhit_adc_avg[plane][i_hit]);
+          hist_map["h_TDC_Diff_vs_ADC_Amp"][plane][bar]->Fill(diff_time, fullhit_adc_amp_avg[plane][i_hit]);
+        }
         // Fill the Front vs Back ADC Integral and Amplitude histograms
         hist_map["h_Front_Back_ADC_Int"][plane][bar]->Fill(
             fullhit_adc_avg[plane][i_hit], fullhit_adc_avg[matching_plane][hodo_hit_punchthrough_idx[plane][i_hit]]);
@@ -338,7 +377,7 @@ void process_chunk(int i_thread, int start, int end, std::vector<TString> &fileN
     // Loop over the hits and fill the histograms
     // Print the status as a percentage
     if (i % ((end - start) / 100) == 0 && i_thread == 0) {
-      std::cout << "\rProcessing: " << int((i - start) * 100.0 / (end - start)) << "% completed." << std::flush;
+      cout << "\rProcessing: " << int((i - start) * 100.0 / (end - start)) << "% completed." << flush;
     }
   } // End Event Loop
 
@@ -350,9 +389,10 @@ int lad_edep_plots() {
   gROOT->SetBatch(kTRUE);
   ROOT::EnableThreadSafety();
 
-  std::vector<TString> fileNames = get_file_names("files/all_LD2_setting2_runlist.dat");
+  // vector<TString> fileNames = get_file_names("files/all_LD2_setting2_runlist.dat");
+  vector<TString> fileNames = get_file_names("files/all_C3_newtiming_runlist.dat");
   // Open multiple ROOT files
-  // std::vector<TString> fileNames = {
+  // vector<TString> fileNames = {
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22591_0_2_-1.root"};
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/bad_timing/LAD_COIN_22609_0_6_-1.root",
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/bad_timing/LAD_COIN_22610_0_6_-1.root",
@@ -366,7 +406,7 @@ int lad_edep_plots() {
   // };
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22616_0_21_-1.root"};
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22382_0_21_-1_1.root"};
-  TString outputFileName = Form("files/lad_edep_plots_LD2_setting2_%c.root", spec_prefix);
+  TString outputFileName = Form("files/lad_edep_plots_C3_%c.root", spec_prefix);
 
   // Create a TChain to combine the trees from multiple files
   TChain *chain = new TChain("T");
@@ -374,8 +414,9 @@ int lad_edep_plots() {
     chain->Add(fileName);
   }
 
+  cout << "Processing " << chain->GetNtrees() << " files." << endl;
   if (chain->GetEntries() == 0) {
-    std::cerr << "Error: Cannot open the ROOT files or no entries in the TChain!" << std::endl;
+    cerr << "Error: Cannot open the ROOT files or no entries in the TChain!" << endl;
     delete chain;
     return -1;
   }
@@ -383,25 +424,29 @@ int lad_edep_plots() {
   // Get the TTree
   TTree *T = chain;
   if (!T) {
-    std::cerr << "Error: Cannot find the TTree named 'T'!" << std::endl;
+    cerr << "Error: Cannot find the TTree named 'T'!" << endl;
     delete chain;
     return -1;
   }
 
   // Number of entries in the TTree
   int nEntries = T->GetEntries();
+  // nEntries     = 681580; // Hard coded entries for LD2 comparablet to LH2
 
   // Number of threads to use
-  int numThreads = std::thread::hardware_concurrency();
+  int numThreads = thread::hardware_concurrency();
   int chunkSize  = nEntries / numThreads;
 
   // Adjust the number of threads if the chunk size is too small
   if (chunkSize < MAX_EVTS_PER_THREAD) {
-    numThreads = std::max(1, nEntries / MAX_EVTS_PER_THREAD);
+    numThreads = max(1, nEntries / MAX_EVTS_PER_THREAD);
     chunkSize  = nEntries / numThreads;
   }
+  if (process_by_file) {
+    numThreads = min(MAX_THREADS, (int)fileNames.size());
+  }
 
-  std::vector<map<string, TH1 *[N_PLANES][N_PADDLES]>> hist_map_vec(numThreads);
+  vector<map<string, TH1 *[N_PLANES][N_PADDLES]>> hist_map_vec(numThreads);
 
   for (int thread = 0; thread < numThreads; ++thread) {
     for (int plane = 0; plane < N_PLANES; ++plane) {
@@ -510,24 +555,49 @@ int lad_edep_plots() {
   // Create an output ROOT file
   TFile *outputFile = new TFile(outputFileName, "RECREATE");
   if (!outputFile || outputFile->IsZombie()) {
-    std::cerr << "Error: Cannot create the output ROOT file!" << std::endl;
+    cerr << "Error: Cannot create the output ROOT file!" << endl;
     return -1;
   }
+  // Helper lambda to format numbers with commas
+  auto format_with_commas = [](int64_t value) {
+    string num         = to_string(value);
+    int insertPosition = num.length() - 3;
+    while (insertPosition > 0) {
+      num.insert(insertPosition, ",");
+      insertPosition -= 3;
+    }
+    return num;
+  };
 
   // start threads
-  cout << "Starting " << numThreads << " threads..." << endl;
+  cout << "Starting " << numThreads << " threads for " << format_with_commas(nEntries) << " events." << endl;
   cout << "Allocating memory for threads might take a few minutes." << endl;
-  std::vector<std::thread> threads;
+  vector<thread> threads;
+
+  vector<vector<TString>> thread_fileNames_vec(numThreads);
   for (int i_thread = 0; i_thread < numThreads; ++i_thread) {
-    int start = i_thread * chunkSize;
-    int end   = (i_thread == numThreads - 1) ? nEntries : start + chunkSize;
-    threads.emplace_back(process_chunk, i_thread, start, end, ref(fileNames), ref(hist_map_vec[i_thread]));
+    if (process_by_file) {
+      // Assign each thread a subset of fileNames (split as evenly as possible)
+      size_t files_per_thread = fileNames.size() / numThreads;
+      size_t extra            = fileNames.size() % numThreads;
+      size_t start_idx        = i_thread * files_per_thread + min<size_t>(i_thread, extra);
+      size_t end_idx          = start_idx + files_per_thread + (i_thread < extra ? 1 : 0);
+
+      thread_fileNames_vec[i_thread] = vector<TString>(fileNames.begin() + start_idx, fileNames.begin() + end_idx);
+
+      threads.emplace_back(process_chunk, i_thread, 0, -1, ref(thread_fileNames_vec[i_thread]),
+                           ref(hist_map_vec[i_thread]));
+    } else {
+      int start = i_thread * chunkSize;
+      int end   = (i_thread == numThreads - 1) ? nEntries : start + chunkSize;
+      threads.emplace_back(process_chunk, i_thread, start, end, ref(fileNames), ref(hist_map_vec[i_thread]));
+    }
   }
   // Wait for all threads to finish
   for (auto &thread : threads) {
     thread.join();
   }
-  std::cout << "\rProcessing: 100% completed. \nMerging histograms" << std::endl;
+  cout << "\rProcessing: 100% completed. \nMerging histograms" << endl;
   // Merge histograms from all threads by adding to the first thread
   for (int i_thread = 0; i_thread < numThreads; ++i_thread) {
     for (const auto &hist_pair : hist_map_vec[i_thread]) {
@@ -562,7 +632,7 @@ int lad_edep_plots() {
   write_to_canvas_plane(hist_map_vec[0]["h_TDC_vs_ADC_Int"], outputFile, "KIN/TDC_VS_ADC_INT", "TDC_VS_ADC_INT");
   write_to_canvas_plane(hist_map_vec[0]["h_TDC_vs_ADC_Amp"], outputFile, "KIN/TDC_VS_ADC_AMP", "TDC_VS_ADC_AMP");
   write_to_canvas_plane(hist_map_vec[0]["h_TDC_Diff_vs_ADC_Amp"], outputFile, "KIN/TDC_DIFF_VS_ADC_AMP",
-                        "TDC_DIFF_VS_ADC_AMP");
+                        "TDC_DIFF_VS_ADC_AMP", pt1_protonCut, pt2_protonCut);
   write_to_canvas_plane(hist_map_vec[0]["h_TDC_Diff_vs_ADC_Int"], outputFile, "KIN/TDC_DIFF_VS_ADC_INT",
                         "TDC_DIFF_VS_ADC_INT");
   write_to_canvas_plane(hist_map_vec[0]["h_Front_Back_ADC_Int"], outputFile, "KIN/FRONT_BACK_ADC_INT",
@@ -570,19 +640,19 @@ int lad_edep_plots() {
   write_to_canvas_plane(hist_map_vec[0]["h_Front_Back_ADC_Amp"], outputFile, "KIN/FRONT_BACK_ADC_AMP",
                         "FRONT_BACK_ADC_AMP");
   write_to_canvas_plane(hist_map_vec[0]["h_time_avg_protons"], outputFile, "KIN/TDC_PROTONS", "TDC_PROTONS");
-
   write_to_canvas_plane(hist_map_vec[0]["h_HitYPos"], outputFile, "KIN/HIT_Y_POS", "HIT_Y_POS");
 
   outputFile->Close();
   delete outputFile;
 
-  std::cout << "Done! All histograms written to file. Cleaning up..." << std::endl;
+  cout << "Done! All histograms written to file " << outputFileName << endl;
+  cout << "Cleaning up..." << endl;
 
-  std::_Exit(0);
+  _Exit(0);
   // It feels overly brutal to do this, but deallocating memory takes hours, and it's reclaimed when the program exits
   // anyway. Other things attempted below failed or and took hours to finish.
   //
-  // std::exit(0);
+  // exit(0);
 
   // gROOT->Reset();
   // return;
