@@ -23,11 +23,15 @@ using namespace std;
 const int MAX_DATA            = 100;
 const int CACHE_SIZE          = 200 * 1024 * 1024; // 200 MB cache size
 const int MAX_EVTS_PER_THREAD = 1000000;
-const int MAX_THREADS         = 200;  // Maximum number of threads to use
+const int MAX_THREADS         = 50;   // Maximum number of threads to use
 const bool process_by_file    = true; // Process by file instead of by event
 
 const double pt1_protonCut[2] = {2, 300};
 const double pt2_protonCut[2] = {5, 0};
+const double beam_charge_norm = 10.0; // Normalization factor for beam charge (mC)
+
+// const double pt1_protonCut[2] = {0, 300};
+// const double pt2_protonCut[2] = {3, 0};
 
 struct hist_params {
   int NBINS;
@@ -35,10 +39,11 @@ struct hist_params {
   double MAX;
 };
 
-const hist_params time_params    = {100, 1700.0, 2000.0};
-const hist_params dt_params      = {200, -2, 10};
-const hist_params adc_amp_params = {200, 0.0, 400.0};
-const hist_params adc_int_params = {200, 0.0, 40.0};
+const hist_params time_params     = {100, 1700.0, 2000.0};
+const hist_params dt_params       = {200, -2, 10};
+const hist_params adc_amp_params  = {200, 0.0, 400.0};
+const hist_params adc_int_params  = {200, 0.0, 40.0};
+const hist_params time_params_bkd = {100, 1850.0, 2000.0}; // Background histogram parameters
 
 const double TDC2NS = 0.09766; // TDC to ns conversion factor
 const double ADC2NS = 0.0625;  // ADC to ns conversion factor
@@ -54,16 +59,29 @@ const string plane_names[N_PLANES] = {"000", "001", "100", "101", "200"};
 const int N_SIDES                  = 2;
 const string side_names[N_SIDES]   = {"Top", "Btm"};
 
-const double janky_diff_time_calib[2][N_PADDLES] = {{-0.25, 0.4, -1.6, 0.5, 0.7, -1.5, 0, 0.6, 0.3, 1, 0.7},
-                                                    {1.1, 0.2, -0.1, -0.4, -0.9, 2, -0.7, -0.2, 0.25, 2, -0.3}};
+// const double janky_diff_time_calib[2][N_PADDLES] = {{-0.25, 0.4, -1.6, 0.5, 0.7, -1.5, 0, 0.6, 0.3, 1, 0.7},
+//                                                     {1.1, 0.2, -0.1, -0.4, -0.9, 2, -0.7, -0.2, 0.25, 2, -0.3}};
 
-vector<TString> get_file_names(const string &filename) {
+const double janky_diff_time_calib[2][N_PADDLES] = {{0.0, 0.0, 0.2, 0.5, 0.0, 0.0, 0.0, 1.0, 0.0, 0.3, 0.3},
+                                                    {-0.3, -6.0, 0, -0.5, 0, 0, 0, 0, 0, -4, 0}};
+
+vector<TString> get_file_names(const string &filename, double &beam_charge = *(new double(-1))) {
   vector<TString> fileNames;
   ifstream infile(filename);
   string line;
   while (getline(infile, line)) {
+    // Check for beam charge line
+    size_t pos = line.find("IBCM4B_CHARGE=");
+    if (pos != string::npos) {
+      try {
+        beam_charge = stod(line.substr(pos + 14));
+      } catch (...) {
+        // Ignore parse errors
+      }
+      continue;
+    }
     // Skip empty lines and lines starting with '#'
-    if (line.empty() || line[0] == '#')
+    if (line.empty() || line[0] == '#' || line.find(".root") == string::npos)
       continue;
     fileNames.push_back(TString(line));
   }
@@ -181,6 +199,101 @@ void write_to_canvas_plane(HistType *hist_arr[N_PLANES][N_PADDLES], TFile *file,
   for (int plane = 0; plane < N_PLANES; ++plane) {
     delete hist_plane_sum[plane];
   }
+  return;
+}
+
+template <typename HistType>
+void write_lad_rates_to_canvas(HistType *hist_arr[N_PLANES][N_PADDLES], TFile *file, TString dir, TString var_name,
+                               double beam_charge = -1) {
+  // Create and navigate to the directory
+  if (!file->GetDirectory(dir)) {
+    file->mkdir(dir);
+  }
+  file->cd(dir);
+
+  // Create a canvas to hold all TGraphs
+  TCanvas *c_rates = new TCanvas(Form("c_%s_all_planes_rates", var_name.Data()),
+                                 Form("%s All Planes Rates", var_name.Data()), 1200, 800);
+  c_rates->Divide(2, 3);
+
+  std::vector<TGraph *> graphs(N_PLANES, nullptr);
+
+  // Draw each plane's TGraph in its own pad
+  for (int plane = 0; plane < N_PLANES; ++plane) {
+    std::vector<double> x_vals, y_vals;
+    for (int bar = 0; bar < N_PADDLES; ++bar) {
+      // Get bin numbers, ensuring we do not include underflow (bin 0) or overflow (bin N+1)
+      int first_bin = 1;
+      int last_bin  = hist_arr[plane][bar]->GetNbinsX();
+
+      int bin_min   = std::max(hist_arr[plane][bar]->FindBin(time_params.MIN), first_bin);
+      int bin_max   = std::min(hist_arr[plane][bar]->FindBin(time_params.MAX), last_bin);
+      int total_int = hist_arr[plane][bar]->Integral(bin_min, bin_max);
+
+      int bkg_bin_min = std::max(hist_arr[plane][bar]->FindBin(time_params_bkd.MIN), first_bin);
+      int bkg_bin_max = std::min(hist_arr[plane][bar]->FindBin(time_params_bkd.MAX), last_bin);
+      int bkg_int     = hist_arr[plane][bar]->Integral(bkg_bin_min, bkg_bin_max);
+
+      double scale = (time_params.MAX - time_params.MIN) / (time_params_bkd.MAX - time_params_bkd.MIN);
+      // double scale       = (bin_max - bin_min) / (bkg_bin_max - bkg_bin_min);
+      double sig_int     = total_int - bkg_int * scale;
+      double charge_norm = (beam_charge < 0) ? 1 : beam_charge_norm / beam_charge;
+      // cout << "Plane: " << plane_names[plane] << ", Bar: " << bar + 1 << ", Total Int: " << total_int
+      //      << ", Background Int: " << bkg_int << ", Signal Int: " << sig_int << ", Charge Norm: " << charge_norm
+      //      << endl;
+      sig_int = sig_int * charge_norm; // Normalize by beam charge
+      x_vals.push_back(bar + 1);
+      y_vals.push_back(sig_int);
+    }
+    graphs[plane] = new TGraph(N_PADDLES, &x_vals[0], &y_vals[0]);
+    graphs[plane]->SetName(Form("g_%s_plane_%s_rates", var_name.Data(), plane_names[plane].c_str()));
+    graphs[plane]->SetTitle(
+        Form("%s Plane %s Rates;Paddle Number;Proton Count", var_name.Data(), plane_names[plane].c_str()));
+    graphs[plane]->SetLineColor(plane + 1);
+    graphs[plane]->SetMarkerStyle(20);
+    graphs[plane]->SetMarkerColor(plane + 1);
+  }
+
+  // Draw each plane in its own pad (pads 1-5)
+  for (int plane = 0; plane < N_PLANES; ++plane) {
+    c_rates->cd(plane + 1);
+    graphs[plane]->Draw("APL");
+  }
+
+  // Last pad: overlay plane 001 (plane 1) and 101 (plane 3)
+  c_rates->cd(6);
+
+  // Make copies of graphs[1] and graphs[3] for overlay
+  TGraph *graph1_overlay = (TGraph *)graphs[1]->Clone("graph1_overlay");
+  TGraph *graph3_overlay = (TGraph *)graphs[3]->Clone("graph3_overlay");
+
+  graph1_overlay->SetLineColor(kBlue + 1);
+  graph1_overlay->SetMarkerColor(kBlue + 1);
+  graph3_overlay->SetLineColor(kRed + 1);
+  graph3_overlay->SetMarkerColor(kRed + 1);
+  graph1_overlay->SetTitle(Form("%s Planes 001 & 101 Rates;Paddle Number;Proton Count", var_name.Data()));
+
+  // Find max y value for both graphs to set axis range
+  double max1 = TMath::MaxElement(graph1_overlay->GetN(), graph1_overlay->GetY());
+  double max3 = TMath::MaxElement(graph3_overlay->GetN(), graph3_overlay->GetY());
+  double ymax = std::max(max1, max3) * 1.1; // add 10% headroom
+
+  graph1_overlay->GetYaxis()->SetRangeUser(0, ymax);
+
+  graph1_overlay->Draw("APL");
+  graph3_overlay->Draw("PL SAME");
+  auto leg = new TLegend(0.65, 0.75, 0.95, 0.9);
+  leg->AddEntry(graph1_overlay, "Plane 001", "lp");
+  leg->AddEntry(graph3_overlay, "Plane 101", "lp");
+  leg->Draw();
+
+  c_rates->Write();
+  delete c_rates;
+  for (auto gr : graphs)
+    delete gr;
+  delete graph1_overlay;
+  delete graph3_overlay;
+  delete leg;
   return;
 }
 
@@ -332,7 +445,7 @@ void process_chunk(int i_thread, int start, int end, vector<TString> &fileNames,
         if (is_punchthrough) {
           diff_time = fullhit_time_avg[matching_plane][hodo_hit_punchthrough_idx[plane][i_hit]] -
                       fullhit_time_avg[plane][i_hit];
-          if (fabs(diff_time) > 10)
+          if (fabs(diff_time) > 20)
             is_punchthrough = false; // Ignore very small time differences
         } else {
           diff_time = -999; // No punchthrough hit found
@@ -340,8 +453,8 @@ void process_chunk(int i_thread, int start, int end, vector<TString> &fileNames,
         if (matching_plane < plane) {
           diff_time = -diff_time; // Adjust the time difference based on the plane order
         }
-        // if (plane / 2 < 2)
-        //   diff_time += janky_diff_time_calib[plane / 2][bar];
+        if (plane / 2 < 2)
+          diff_time += janky_diff_time_calib[plane / 2][bar];
         // Apply Proton Cut
         double m       = (pt2_protonCut[1] - pt1_protonCut[1]) / (pt2_protonCut[0] - pt1_protonCut[0]);
         double b       = pt1_protonCut[1] - m * pt1_protonCut[0];
@@ -359,17 +472,19 @@ void process_chunk(int i_thread, int start, int end, vector<TString> &fileNames,
           hist_map["h_TDC_Diff_bar"][plane][bar]->Fill(diff_time);
           hist_map["h_TDC_Diff_vs_ADC_Int"][plane][bar]->Fill(diff_time, fullhit_adc_avg[plane][i_hit]);
           hist_map["h_TDC_Diff_vs_ADC_Amp"][plane][bar]->Fill(diff_time, fullhit_adc_amp_avg[plane][i_hit]);
+          hist_map["h_Front_Back_ADC_Int"][plane][bar]->Fill(
+              fullhit_adc_avg[plane][i_hit], fullhit_adc_avg[matching_plane][hodo_hit_punchthrough_idx[plane][i_hit]]);
+          hist_map["h_Front_Back_ADC_Amp"][plane][bar]->Fill(
+              fullhit_adc_amp_avg[plane][i_hit],
+              fullhit_adc_amp_avg[matching_plane][hodo_hit_punchthrough_idx[plane][i_hit]]);
         }
-        // Fill the Front vs Back ADC Integral and Amplitude histograms
-        hist_map["h_Front_Back_ADC_Int"][plane][bar]->Fill(
-            fullhit_adc_avg[plane][i_hit], fullhit_adc_avg[matching_plane][hodo_hit_punchthrough_idx[plane][i_hit]]);
-        hist_map["h_Front_Back_ADC_Amp"][plane][bar]->Fill(
-            fullhit_adc_amp_avg[plane][i_hit],
-            fullhit_adc_amp_avg[matching_plane][hodo_hit_punchthrough_idx[plane][i_hit]]);
         hist_map["h_HitYPos"][plane][bar]->Fill(fullhit_ypos[plane][i_hit]);
 
         if (is_proton) {
           hist_map["h_time_avg_protons"][plane][bar]->Fill(fullhit_time_avg[plane][i_hit]);
+        }
+        if (is_punchthrough && !is_proton) { // is pion
+          hist_map["h_time_avg_pions"][plane][bar]->Fill(fullhit_time_avg[plane][i_hit]);
         }
       }
     }
@@ -389,8 +504,13 @@ int lad_edep_plots() {
   gROOT->SetBatch(kTRUE);
   ROOT::EnableThreadSafety();
 
+  double beam_charge = -1;
   // vector<TString> fileNames = get_file_names("files/all_LD2_setting2_runlist.dat");
-  vector<TString> fileNames = get_file_names("files/all_C3_newtiming_runlist.dat");
+  // vector<TString> fileNames = get_file_names("files/all_LH2_13deg_runlist.dat", beam_charge);
+  vector<TString> fileNames = get_file_names("files/all_C3_23105_23109_runlist.dat", beam_charge);
+  // vector<TString> fileNames =
+  //     {"/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_23403_0_1_-1.root",
+  //      "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_23403_2_4_-1.root"};
   // Open multiple ROOT files
   // vector<TString> fileNames = {
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22591_0_2_-1.root"};
@@ -406,7 +526,8 @@ int lad_edep_plots() {
   // };
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22616_0_21_-1.root"};
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22382_0_21_-1_1.root"};
-  TString outputFileName = Form("files/lad_edep_plots_C3_%c.root", spec_prefix);
+  // TString outputFileName = Form("files/lad_edep_plots_LH2_13deg_%c.root", spec_prefix);
+  TString outputFileName = Form("files/lad_edep_plots_C3_23105_23109_%c.root", spec_prefix);
 
   // Create a TChain to combine the trees from multiple files
   TChain *chain = new TChain("T");
@@ -471,6 +592,13 @@ int lad_edep_plots() {
                      time_params.NBINS, time_params.MIN, time_params.MAX);
         hist_map_vec[thread]["h_time_avg_protons"][plane][bar]->GetXaxis()->SetTitle("Time (ns)");
         hist_map_vec[thread]["h_time_avg_protons"][plane][bar]->GetYaxis()->SetTitle("Counts");
+
+        hist_map_vec[thread]["h_time_avg_pions"][plane][bar] =
+            new TH1D(Form("h_TDC_pions_thread_%d_plane_%s_bar_%d", thread, plane_names[plane].c_str(), bar),
+                     Form("TDC Pions Thread %d Plane %s Bar %d", thread, plane_names[plane].c_str(), bar),
+                     time_params.NBINS, time_params.MIN, time_params.MAX);
+        hist_map_vec[thread]["h_time_avg_pions"][plane][bar]->GetXaxis()->SetTitle("Time (ns)");
+        hist_map_vec[thread]["h_time_avg_pions"][plane][bar]->GetYaxis()->SetTitle("Counts");
 
         hist_map_vec[thread]["h_TDC_Diff_bar"][plane][bar] =
             new TH1D(Form("h_TDC_Diff_thread_%d_plane_%s_bar_%d", thread, plane_names[plane].c_str(), bar),
@@ -640,6 +768,11 @@ int lad_edep_plots() {
   write_to_canvas_plane(hist_map_vec[0]["h_Front_Back_ADC_Amp"], outputFile, "KIN/FRONT_BACK_ADC_AMP",
                         "FRONT_BACK_ADC_AMP");
   write_to_canvas_plane(hist_map_vec[0]["h_time_avg_protons"], outputFile, "KIN/TDC_PROTONS", "TDC_PROTONS");
+  write_lad_rates_to_canvas(hist_map_vec[0]["h_time_avg_protons"], outputFile, "KIN/LAD_RATES", "PROTON_RATES",
+                            beam_charge);
+  write_to_canvas_plane(hist_map_vec[0]["h_time_avg_pions"], outputFile, "KIN/TDC_PIONS", "TDC_PIONS");
+  write_lad_rates_to_canvas(hist_map_vec[0]["h_time_avg_pions"], outputFile, "KIN/LAD_RATES", "PION_RATES",
+                            beam_charge);
   write_to_canvas_plane(hist_map_vec[0]["h_HitYPos"], outputFile, "KIN/HIT_Y_POS", "HIT_Y_POS");
 
   outputFile->Close();
