@@ -43,6 +43,7 @@ const hist_params time_params     = {100, 1700.0, 2000.0};
 const hist_params dt_params       = {200, -2, 10};
 const hist_params adc_amp_params  = {200, 0.0, 400.0};
 const hist_params adc_int_params  = {200, 0.0, 40.0};
+const hist_params time_params_sig = {100, 1770, 1810};     // Background ADC integral parameters
 const hist_params time_params_bkd = {100, 1850.0, 2000.0}; // Background histogram parameters
 
 const double TDC2NS = 0.09766; // TDC to ns conversion factor
@@ -51,7 +52,7 @@ const double ADC2NS = 0.0625;  // ADC to ns conversion factor
 const int MIN_TDC_TIME = 1600;
 const int MAX_TDC_TIME = 2000;
 
-const char spec_prefix = 'H'; // Spectrometer to replay
+const char spec_prefix = 'P'; // Spectrometer to replay
 
 const int N_PLANES                 = 5;
 const int N_PADDLES                = 11;
@@ -95,7 +96,7 @@ void kill_afterpulses(Double_t times[MAX_DATA], Int_t n_entries) {
       if (i != j && abs(times[i] - times[j]) < 20 && times[i] > times[j]) {
         // If the time difference is less than 10 ns, consider it an afterpulse
         times[i] = -9999; // Mark as invalid
-        break;            // No need to check further for this entry
+        // break;            // No need to check further for this entry
       }
     }
   }
@@ -146,11 +147,22 @@ void write_to_canvas_plane(HistType *hist_arr[N_PLANES][N_PADDLES], TFile *file,
       c1->cd(bar + 1);
       hist_arr[plane][bar]->Draw();
       if (draw_line) {
-        // Draw the line on the histogram
         TLine *line = new TLine(pt1[0], pt1[1], pt2[0], pt2[1]);
         line->SetLineColor(kRed);
         line->SetLineWidth(4);
         line->Draw("same");
+
+        TLine *line3 = new TLine(3, c1->GetUymin(), 3, c1->GetUymax());
+        line3->SetLineColor(kRed);
+        line3->SetLineStyle(4);
+        // line3->SetLineWidth(2);
+        line3->Draw("same");
+
+        TLine *line6 = new TLine(6, c1->GetUymin(), 6, c1->GetUymax());
+        line6->SetLineColor(kRed);
+        line6->SetLineStyle(4);
+        // line6->SetLineWidth(2);
+        line6->Draw("same");
         // Do not delete the line here; let ROOT manage its lifetime
       }
     }
@@ -226,22 +238,22 @@ void write_lad_rates_to_canvas(HistType *hist_arr[N_PLANES][N_PADDLES], TFile *f
       int first_bin = 1;
       int last_bin  = hist_arr[plane][bar]->GetNbinsX();
 
-      int bin_min   = std::max(hist_arr[plane][bar]->FindBin(time_params.MIN), first_bin);
-      int bin_max   = std::min(hist_arr[plane][bar]->FindBin(time_params.MAX), last_bin);
+      int bin_min   = std::max(hist_arr[plane][bar]->FindBin(time_params_sig.MIN), first_bin);
+      int bin_max   = std::min(hist_arr[plane][bar]->FindBin(time_params_sig.MAX), last_bin);
       int total_int = hist_arr[plane][bar]->Integral(bin_min, bin_max);
 
       int bkg_bin_min = std::max(hist_arr[plane][bar]->FindBin(time_params_bkd.MIN), first_bin);
       int bkg_bin_max = std::min(hist_arr[plane][bar]->FindBin(time_params_bkd.MAX), last_bin);
       int bkg_int     = hist_arr[plane][bar]->Integral(bkg_bin_min, bkg_bin_max);
 
-      double scale = (time_params.MAX - time_params.MIN) / (time_params_bkd.MAX - time_params_bkd.MIN);
+      double scale = (time_params_sig.MAX - time_params_sig.MIN) / (time_params_bkd.MAX - time_params_bkd.MIN);
       // double scale       = (bin_max - bin_min) / (bkg_bin_max - bkg_bin_min);
       double sig_int     = total_int - bkg_int * scale;
       double charge_norm = (beam_charge < 0) ? 1 : beam_charge_norm / beam_charge;
       // cout << "Plane: " << plane_names[plane] << ", Bar: " << bar + 1 << ", Total Int: " << total_int
       //      << ", Background Int: " << bkg_int << ", Signal Int: " << sig_int << ", Charge Norm: " << charge_norm
       //      << endl;
-      sig_int = sig_int * charge_norm; // Normalize by beam charge
+      sig_int *= charge_norm; // Normalize by beam charge
       x_vals.push_back(bar + 1);
       y_vals.push_back(sig_int);
     }
@@ -295,6 +307,113 @@ void write_lad_rates_to_canvas(HistType *hist_arr[N_PLANES][N_PADDLES], TFile *f
   delete graph3_overlay;
   delete leg;
   return;
+}
+
+template <typename HistType>
+void write_to_canvas_plane_2D_bdk_sub(HistType *hist_arr[N_PLANES][N_PADDLES], TFile *file, TString dir,
+                                      TString var_name, double plot_xmin = -1, double plot_xmax = -1,
+                                      double bkg_xmin = -1, double bkg_xmax = -1, const double pt1[2] = nullptr,
+                                      const double pt2[2] = nullptr) {
+  bool draw_line = (pt1 || pt2);
+  file->mkdir(dir);
+  file->cd(dir);
+
+  // Loop over all planes and paddles
+  for (int plane = 0; plane < N_PLANES; ++plane) {
+    for (int bar = 0; bar < N_PADDLES; ++bar) {
+      auto *h2 = dynamic_cast<TH2D *>(hist_arr[plane][bar]);
+      if (h2) {
+        int nxbins = h2->GetNbinsX();
+        int nybins = h2->GetNbinsY();
+
+        // Determine plot and background bin ranges
+        int plot_bin_min = (plot_xmin < plot_xmax) ? h2->GetXaxis()->FindBin(plot_xmin) : 1;
+        int plot_bin_max = (plot_xmin < plot_xmax) ? h2->GetXaxis()->FindBin(plot_xmax) : nxbins;
+        int bkg_bin_min  = (bkg_xmin < bkg_xmax) ? h2->GetXaxis()->FindBin(bkg_xmin) : 1;
+        int bkg_bin_max  = (bkg_xmin < bkg_xmax) ? h2->GetXaxis()->FindBin(bkg_xmax) : nxbins;
+
+        // Create a new histogram for the subtracted result
+        // Create a new histogram with the same y axis, but new x axis range and binning
+        TH2D *h2_sub = new TH2D(Form("%s_bkgsub", h2->GetName()), TString(h2->GetTitle()) + " (bkg sub)",
+                                plot_bin_max - plot_bin_min + 1, h2->GetXaxis()->GetBinLowEdge(plot_bin_min),
+                                h2->GetXaxis()->GetBinUpEdge(plot_bin_max), nybins, h2->GetYaxis()->GetXmin(),
+                                h2->GetYaxis()->GetXmax());
+        h2_sub->GetXaxis()->SetTitle(h2->GetXaxis()->GetTitle());
+        h2_sub->GetYaxis()->SetTitle(h2->GetYaxis()->GetTitle());
+
+        // Compute average background for each y bin
+        std::vector<double> bkg_avg(nybins + 2, 0.0); // +2 for ROOT binning
+        for (int iy = 1; iy <= nybins; ++iy) {
+          double sum = 0;
+          int nsum   = 0;
+          for (int ix = bkg_bin_min; ix <= bkg_bin_max; ++ix) {
+            sum += h2->GetBinContent(ix, iy);
+            nsum++;
+          }
+          bkg_avg[iy] = (nsum > 0) ? sum / nsum : 0.0;
+        }
+
+        // Subtract background from plot region
+        for (int ix = plot_bin_min; ix <= plot_bin_max; ++ix) {
+          for (int iy = 1; iy <= nybins; ++iy) {
+            double v = h2->GetBinContent(ix, iy) - bkg_avg[iy];
+            if (v < 0)
+              v = 0;
+            h2_sub->SetBinContent(ix, iy, v);
+          }
+        }
+
+        // Optionally, set bins outside plot region to zero for clarity
+        for (int ix = 1; ix <= nxbins; ++ix) {
+          if (ix < plot_bin_min || ix > plot_bin_max) {
+            for (int iy = 1; iy <= nybins; ++iy)
+              h2_sub->SetBinContent(ix, iy, 0);
+          }
+        }
+
+        hist_arr[plane][bar] = h2_sub;
+      }
+    }
+  }
+
+  // Now draw as before
+  for (int plane = 0; plane < N_PLANES; ++plane) {
+    TCanvas *c1 = new TCanvas(Form("c_%s_plane_%s", var_name.Data(), plane_names[plane].c_str()),
+                              Form("%s Plane %s", var_name.Data(), plane_names[plane].c_str()), 800, 600);
+    c1->Divide(4, 3);
+    for (int bar = 0; bar < N_PADDLES; ++bar) {
+      c1->cd(bar + 1);
+      hist_arr[plane][bar]->Draw("COLZ");
+      if (draw_line) {
+        TLine *line = new TLine(pt1[0], pt1[1], pt2[0], pt2[1]);
+        line->SetLineColor(kRed);
+        line->SetLineWidth(4);
+        line->Draw("same");
+
+        TLine *line3 = new TLine(3, c1->GetUymin(), 3, c1->GetUymax());
+        line3->SetLineColor(kRed);
+        line3->SetLineStyle(4);
+        line3->Draw("same");
+
+        TLine *line6 = new TLine(6, c1->GetUymin(), 6, c1->GetUymax());
+        line6->SetLineColor(kRed);
+        line6->SetLineStyle(4);
+        line6->Draw("same");
+      }
+    }
+    c1->Write();
+    delete c1;
+  }
+
+  // Clean up: delete any new histograms we created
+  for (int plane = 0; plane < N_PLANES; ++plane) {
+    for (int bar = 0; bar < N_PADDLES; ++bar) {
+      auto *h2 = dynamic_cast<TH2D *>(hist_arr[plane][bar]);
+      if (h2 && TString(h2->GetName()).EndsWith("_bkgsub")) {
+        delete h2;
+      }
+    }
+  }
 }
 
 template <typename T> void add_branch(TChain *tree, const char *branch_name, T *branch_data) {
@@ -465,6 +584,18 @@ void process_chunk(int i_thread, int start, int end, vector<TString> &fileNames,
             is_proton =
                 fullhit_adc_amp_avg[matching_plane][hodo_hit_punchthrough_idx[plane][i_hit]] > (m * diff_time + b);
         }
+        double adc_amp_back;
+        if (plane < matching_plane) {
+          adc_amp_back = fullhit_adc_amp_avg[matching_plane][hodo_hit_punchthrough_idx[plane][i_hit]];
+        } else {
+          adc_amp_back = fullhit_adc_amp_avg[plane][i_hit];
+        }
+        if (is_proton && adc_amp_back < 100) {
+          is_proton = false; // Ignore protons with very low ADC amplitude
+        }
+        if (diff_time > 6 || diff_time < 3) {
+          is_proton = false;
+        }
 
         // Fill the histograms with the TDC difference
         hist_map["h_time_avg_punchthrough"][plane][bar]->Fill(fullhit_time_avg[plane][i_hit]);
@@ -477,11 +608,21 @@ void process_chunk(int i_thread, int start, int end, vector<TString> &fileNames,
           hist_map["h_Front_Back_ADC_Amp"][plane][bar]->Fill(
               fullhit_adc_amp_avg[plane][i_hit],
               fullhit_adc_amp_avg[matching_plane][hodo_hit_punchthrough_idx[plane][i_hit]]);
+          // Fill the 2D histogram for Front vs Back Hit Y Position
+          hist_map["h_Front_Back_HitYPos"][plane][bar]->Fill(
+              fullhit_ypos[plane][i_hit], fullhit_ypos[matching_plane][hodo_hit_punchthrough_idx[plane][i_hit]]);
         }
         hist_map["h_HitYPos"][plane][bar]->Fill(fullhit_ypos[plane][i_hit]);
 
         if (is_proton) {
           hist_map["h_time_avg_protons"][plane][bar]->Fill(fullhit_time_avg[plane][i_hit]);
+          hist_map["h_Front_Back_ADC_Amp_proton"][plane][bar]->Fill(
+              fullhit_adc_amp_avg[plane][i_hit],
+              fullhit_adc_amp_avg[matching_plane][hodo_hit_punchthrough_idx[plane][i_hit]]);
+          hist_map["h_Front_Back_ADC_Int_proton"][plane][bar]->Fill(
+              fullhit_adc_avg[plane][i_hit], fullhit_adc_avg[matching_plane][hodo_hit_punchthrough_idx[plane][i_hit]]);
+          hist_map["h_TDC_Diff_vs_ADC_Amp_proton"][plane][bar]->Fill(diff_time, fullhit_adc_amp_avg[plane][i_hit]);
+          hist_map["h_TDC_Diff_vs_ADC_Int_proton"][plane][bar]->Fill(diff_time, fullhit_adc_avg[plane][i_hit]);
         }
         if (is_punchthrough && !is_proton) { // is pion
           hist_map["h_time_avg_pions"][plane][bar]->Fill(fullhit_time_avg[plane][i_hit]);
@@ -505,29 +646,31 @@ int lad_edep_plots() {
   ROOT::EnableThreadSafety();
 
   double beam_charge = -1;
-  // vector<TString> fileNames = get_file_names("files/all_LD2_setting2_runlist.dat");
-  // vector<TString> fileNames = get_file_names("files/all_LH2_13deg_runlist.dat", beam_charge);
-  vector<TString> fileNames = get_file_names("files/all_C3_23105_23109_runlist.dat", beam_charge);
-  // vector<TString> fileNames =
+  // vector<TString> fileNames = get_file_names("files/run-lists/all_empty_13deg_runlist.dat", beam_charge);
+  // vector<TString> fileNames = get_file_names("files/run-lists/all_LH2_13deg_runlist.dat", beam_charge);
+  vector<TString> fileNames = get_file_names("files/run-lists/all_LD2_setting3_runlist.dat", beam_charge);
+  // vector<TString> fileNames = {"/cache/hallc/c-lad/analysis/ehingerl/online_v1/LAD_COIN_23050_0_3_-1_1.root",};
+  //                              "/cache/hallc/c-lad/analysis/ehingerl/online_v1/LAD_COIN_23050_0_3_-1.root",
+  //                              "/cache/hallc/c-lad/analysis/ehingerl/online_v1/LAD_COIN_23050_8_10_-1.root"};
   //     {"/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_23403_0_1_-1.root",
   //      "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_23403_2_4_-1.root"};
   // Open multiple ROOT files
   // vector<TString> fileNames = {
-  // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22591_0_2_-1.root"};
-  // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/bad_timing/LAD_COIN_22609_0_6_-1.root",
-  // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/bad_timing/LAD_COIN_22610_0_6_-1.root",
-  // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/bad_timing/LAD_COIN_22611_0_6_-1.root",
-  // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/bad_timing/LAD_COIN_22613_0_6_-1.root",
-  // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/bad_timing/LAD_COIN_22615_0_6_-1.root",
-  // "/cache/hallc/c-lad/analysis/ehingerl/online_v1/LAD_COIN_23105_0_6_-1.root",
-  // "/cache/hallc/c-lad/analysis/ehingerl/online_v1/LAD_COIN_23106_0_6_-1.root",
-  // "/cache/hallc/c-lad/analysis/ehingerl/online_v1/LAD_COIN_23107_0_6_-1.root",
-  // "/cache/hallc/c-lad/analysis/ehingerl/online_v1/LAD_COIN_23108_0_6_-1.root",
+      // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22591_0_2_-1.root"};
+      // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/bad_timing/LAD_COIN_22609_0_6_-1.root",
+      // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/bad_timing/LAD_COIN_22610_0_6_-1.root",
+      // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/bad_timing/LAD_COIN_22611_0_6_-1.root",
+      // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/bad_timing/LAD_COIN_22613_0_6_-1.root",
+      // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/bad_timing/LAD_COIN_22615_0_6_-1.root",
+  //     "/cache/hallc/c-lad/analysis/ehingerl/online_v1/LAD_COIN_23105_0_6_-1.root",
+  //     "/cache/hallc/c-lad/analysis/ehingerl/online_v1/LAD_COIN_23106_0_6_-1.root",
+  //     "/cache/hallc/c-lad/analysis/ehingerl/online_v1/LAD_COIN_23107_0_6_-1.root",
+  //     "/cache/hallc/c-lad/analysis/ehingerl/online_v1/LAD_COIN_23108_0_6_-1.root",
   // };
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22616_0_21_-1.root"};
   // "/volatile/hallc/c-lad/ehingerl/lad_replay/ROOTfiles/LAD_COIN/PRODUCTION/LAD_COIN_22382_0_21_-1_1.root"};
-  // TString outputFileName = Form("files/lad_edep_plots_LH2_13deg_%c.root", spec_prefix);
-  TString outputFileName = Form("files/lad_edep_plots_C3_23105_23109_%c.root", spec_prefix);
+  TString outputFileName = Form("files/lad_edep_plots_LD2_setting3_%c.root", spec_prefix);
+  // TString outputFileName = Form("files/lad_edep_plots_test_%c.root", spec_prefix);
 
   // Create a TChain to combine the trees from multiple files
   TChain *chain = new TChain("T");
@@ -676,6 +819,52 @@ int lad_edep_plots() {
             Form("Hit Y Position Thread %d Plane %s Bar %d", thread, plane_names[plane].c_str(), bar), 100, -250, 250);
         hist_map_vec[thread]["h_HitYPos"][plane][bar]->GetXaxis()->SetTitle("Y Position (cm)");
         hist_map_vec[thread]["h_HitYPos"][plane][bar]->GetYaxis()->SetTitle("Counts");
+
+        hist_map_vec[thread]["h_Front_Back_HitYPos"][plane][bar] =
+            new TH2D(Form("h_Front_Back_HitYPos_thread_%d_plane_%s_bar_%d", thread, plane_names[plane].c_str(), bar),
+                     Form("Front vs Back Hit YPos Thread %d Plane %s Bar %d", thread, plane_names[plane].c_str(), bar),
+                     100, -250, 250, 100, -250, 250);
+        hist_map_vec[thread]["h_Front_Back_HitYPos"][plane][bar]->GetXaxis()->SetTitle("Front Hit YPos (cm)");
+        hist_map_vec[thread]["h_Front_Back_HitYPos"][plane][bar]->GetYaxis()->SetTitle("Back Hit YPos (cm)");
+
+        // 2D histogram: Front vs Back ADC Amplitude (proton cut)
+        hist_map_vec[thread]["h_Front_Back_ADC_Amp_proton"][plane][bar] = new TH2D(
+            Form("h_Front_Back_ADC_Amp_proton_thread_%d_plane_%s_bar_%d", thread, plane_names[plane].c_str(), bar),
+            Form("Front vs Back ADC Amp (Proton) Thread %d Plane %s Bar %d", thread, plane_names[plane].c_str(), bar),
+            adc_amp_params.NBINS, adc_amp_params.MIN, adc_amp_params.MAX, adc_amp_params.NBINS, adc_amp_params.MIN,
+            adc_amp_params.MAX);
+        hist_map_vec[thread]["h_Front_Back_ADC_Amp_proton"][plane][bar]->GetXaxis()->SetTitle(
+            "Front ADC Amplitude (mV)");
+        hist_map_vec[thread]["h_Front_Back_ADC_Amp_proton"][plane][bar]->GetYaxis()->SetTitle(
+            "Back ADC Amplitude (mV)");
+
+        // 2D histogram: Front vs Back ADC Integral (proton cut)
+        hist_map_vec[thread]["h_Front_Back_ADC_Int_proton"][plane][bar] = new TH2D(
+            Form("h_Front_Back_ADC_Int_proton_thread_%d_plane_%s_bar_%d", thread, plane_names[plane].c_str(), bar),
+            Form("Front vs Back ADC Int (Proton) Thread %d Plane %s Bar %d", thread, plane_names[plane].c_str(), bar),
+            adc_int_params.NBINS, adc_int_params.MIN, adc_int_params.MAX, adc_int_params.NBINS, adc_int_params.MIN,
+            adc_int_params.MAX);
+        hist_map_vec[thread]["h_Front_Back_ADC_Int_proton"][plane][bar]->GetXaxis()->SetTitle(
+            "Front ADC Integral (pC)");
+        hist_map_vec[thread]["h_Front_Back_ADC_Int_proton"][plane][bar]->GetYaxis()->SetTitle("Back ADC Integral (pC)");
+
+        // 2D histogram: TDC Diff vs ADC Amp (proton cut)
+        hist_map_vec[thread]["h_TDC_Diff_vs_ADC_Amp_proton"][plane][bar] = new TH2D(
+            Form("h_TDC_Diff_vs_ADC_Amp_proton_thread_%d_plane_%s_bar_%d", thread, plane_names[plane].c_str(), bar),
+            Form("TDC Diff vs ADC Amp (Proton) Thread %d Plane %s Bar %d", thread, plane_names[plane].c_str(), bar),
+            dt_params.NBINS, dt_params.MIN, dt_params.MAX, adc_amp_params.NBINS, adc_amp_params.MIN,
+            adc_amp_params.MAX);
+        hist_map_vec[thread]["h_TDC_Diff_vs_ADC_Amp_proton"][plane][bar]->GetXaxis()->SetTitle("Time Difference (ns)");
+        hist_map_vec[thread]["h_TDC_Diff_vs_ADC_Amp_proton"][plane][bar]->GetYaxis()->SetTitle("ADC Amplitude (mV)");
+
+        // 2D histogram: TDC Diff vs ADC Int (proton cut)
+        hist_map_vec[thread]["h_TDC_Diff_vs_ADC_Int_proton"][plane][bar] = new TH2D(
+            Form("h_TDC_Diff_vs_ADC_Int_proton_thread_%d_plane_%s_bar_%d", thread, plane_names[plane].c_str(), bar),
+            Form("TDC Diff vs ADC Int (Proton) Thread %d Plane %s Bar %d", thread, plane_names[plane].c_str(), bar),
+            dt_params.NBINS, dt_params.MIN, dt_params.MAX, adc_int_params.NBINS, adc_int_params.MIN,
+            adc_int_params.MAX);
+        hist_map_vec[thread]["h_TDC_Diff_vs_ADC_Int_proton"][plane][bar]->GetXaxis()->SetTitle("Time Difference (ns)");
+        hist_map_vec[thread]["h_TDC_Diff_vs_ADC_Int_proton"][plane][bar]->GetYaxis()->SetTitle("ADC Integral (pC)");
       }
     }
   }
@@ -759,6 +948,10 @@ int lad_edep_plots() {
   write_to_canvas_plane(hist_map_vec[0]["h_ADC_Amp"], outputFile, "KIN/ADC_AMP", "ADC_AMP");
   write_to_canvas_plane(hist_map_vec[0]["h_TDC_vs_ADC_Int"], outputFile, "KIN/TDC_VS_ADC_INT", "TDC_VS_ADC_INT");
   write_to_canvas_plane(hist_map_vec[0]["h_TDC_vs_ADC_Amp"], outputFile, "KIN/TDC_VS_ADC_AMP", "TDC_VS_ADC_AMP");
+  write_to_canvas_plane_2D_bdk_sub(hist_map_vec[0]["h_TDC_vs_ADC_Int"], outputFile, "KIN/TDC_VS_ADC_INT_BDK_SUB",
+                                   "TDC_VS_ADC_INT_BDK_SUB", 1700, 1900, 1900, 1980);
+  write_to_canvas_plane_2D_bdk_sub(hist_map_vec[0]["h_TDC_vs_ADC_Amp"], outputFile, "KIN/TDC_VS_ADC_AMP_BDK_SUB",
+                                   "TDC_VS_ADC_AMP_BDK_SUB", 1700, 1900, 1900, 1980);
   write_to_canvas_plane(hist_map_vec[0]["h_TDC_Diff_vs_ADC_Amp"], outputFile, "KIN/TDC_DIFF_VS_ADC_AMP",
                         "TDC_DIFF_VS_ADC_AMP", pt1_protonCut, pt2_protonCut);
   write_to_canvas_plane(hist_map_vec[0]["h_TDC_Diff_vs_ADC_Int"], outputFile, "KIN/TDC_DIFF_VS_ADC_INT",
@@ -774,6 +967,16 @@ int lad_edep_plots() {
   write_lad_rates_to_canvas(hist_map_vec[0]["h_time_avg_pions"], outputFile, "KIN/LAD_RATES", "PION_RATES",
                             beam_charge);
   write_to_canvas_plane(hist_map_vec[0]["h_HitYPos"], outputFile, "KIN/HIT_Y_POS", "HIT_Y_POS");
+  write_to_canvas_plane(hist_map_vec[0]["h_Front_Back_HitYPos"], outputFile, "KIN/FRONT_BACK_HIT_YPOS",
+                        "FRONT_BACK_HIT_YPOS");
+  write_to_canvas_plane(hist_map_vec[0]["h_Front_Back_ADC_Amp_proton"], outputFile, "KIN/FRONT_BACK_ADC_AMP_PROTON",
+                        "FRONT_BACK_ADC_AMP_PROTON");
+  write_to_canvas_plane(hist_map_vec[0]["h_Front_Back_ADC_Int_proton"], outputFile, "KIN/FRONT_BACK_ADC_INT_PROTON",
+                        "FRONT_BACK_ADC_INT_PROTON");
+  write_to_canvas_plane(hist_map_vec[0]["h_TDC_Diff_vs_ADC_Amp_proton"], outputFile, "KIN/TDC_DIFF_VS_ADC_AMP_PROTON",
+                        "TDC_DIFF_VS_ADC_AMP_PROTON");
+  write_to_canvas_plane(hist_map_vec[0]["h_TDC_Diff_vs_ADC_Int_proton"], outputFile, "KIN/TDC_DIFF_VS_ADC_INT_PROTON",
+                        "TDC_DIFF_VS_ADC_INT_PROTON");
 
   outputFile->Close();
   delete outputFile;
